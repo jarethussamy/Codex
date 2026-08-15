@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="theme-color" content="#0d2230">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Cornhole AI Camera V5.0 AutoScore</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body><main>
+  <header><span class="pill">🤳 CAMERA-ONLY V5.0</span><span class="pill" id="sys">READY</span></header>
+  <h1>Cornhole AI Camera Ref</h1>
+  <div class="mut">Android live-camera build · automatic bag detection · team-aware scoring · sensors later.</div>
+
+  <section class="card scores">
+    <div class="team"><b class="a">TEAM A</b><div class="n a" id="sa">0</div><small>GAME</small><div class="roundRaw">ROUND <b id="ra">0</b></div></div>
+    <div><b>ROUND <span id="rn">1</span></b><br><span class="mut"><span id="tc">0</span>/8 throws</span><div class="nextThrow" id="nextThrow">NEXT: TEAM A</div></div>
+    <div class="team"><b class="b">TEAM B</b><div class="n b" id="sb">0</div><small>GAME</small><div class="roundRaw">ROUND <b id="rb">0</b></div></div>
+  </section>
+  <div id="winner" class="winner"></div><div id="call"></div>
+
+  <section class="card">
+    <b>1. Camera + live diagnostics</b>
+    <div class="diagGrid">
+      <div id="dSecure" class="diagItem wait"><div class="diagLabel">HTTPS</div><div class="diagValue">CHECKING</div></div>
+      <div id="dApi" class="diagItem wait"><div class="diagLabel">Camera API</div><div class="diagValue">CHECKING</div></div>
+      <div id="dPermission" class="diagItem wait"><div class="diagLabel">Permission</div><div class="diagValue">NOT ASKED</div></div>
+      <div id="dFrames" class="diagItem wait"><div class="diagLabel">Frames</div><div class="diagValue">0</div></div>
+    </div>
+    <div id="diagText" class="tiny"></div>
+
+    <div class="camera" id="cameraWrap" style="margin-top:10px">
+      <video id="cam" autoplay playsinline muted></video>
+      <canvas id="liveCanvas" style="display:none"></canvas>
+      <canvas id="overlay"></canvas>
+      <div class="hud"><span id="visionState">Vision idle</span><span id="fps">0 fps</span></div>
+      <div id="cameraMeta">No camera connected</div>
+    </div>
+
+    <div class="row">
+      <button class="go" id="startBtn" onclick="App.startCamera()">🤳 Start Rear Camera</button>
+      <label style="display:inline-block"><input id="clipInput" type="file" accept="video/*" capture="environment" hidden onchange="App.loadClip(this)"><span style="display:inline-block;background:#1c4256;color:white;font-weight:760;border-radius:12px;padding:11px;margin:4px;cursor:pointer">🎥 Record/Test Video</span></label>
+      <button class="ghost" onclick="App.flipCamera()">↻ Flip Camera</button>
+      <select id="cameraSelect" onchange="App.selectCamera(this.value)" style="max-width:220px"><option value="">Auto rear camera</option></select>
+      <button class="ghost" onclick="App.forceCanvasPreview()">▣ Canvas Preview</button>
+      <button class="ghost" onclick="App.stopCamera()">■ Stop</button>
+      <button class="install" id="installBtn" hidden onclick="App.installApp()">⬇ Install App</button>
+    </div>
+
+    <div class="steps">
+      <div class="step" id="s1"><b>Board</b><br><span class="tiny mut">Tap 4 board corners</span></div>
+      <div class="step" id="s2"><b>Hole</b><br><span class="tiny mut">Tap center + edge</span></div>
+      <div class="step" id="s3"><b>Team A bag</b><br><span class="tiny mut">Tap visible bag color</span></div>
+      <div class="step" id="s4"><b>Team B bag</b><br><span class="tiny mut">Tap visible bag color</span></div>
+    </div>
+    <div class="row"><button onclick="App.modeBoard()">◎ Set Board</button><button onclick="App.modeHole()">◉ Set Hole</button><button onclick="App.modeColor('A')"><span id="swA" class="swatch"></span>Sample A</button><button onclick="App.modeColor('B')"><span id="swB" class="swatch"></span>Sample B</button><button class="warn" onclick="App.clearCalibration()">Clear Calibration</button></div>
+    <div class="tiny mut" id="calHelp">Start the rear camera, then do a fresh V5 calibration: board → hole → Team A bag → Team B bag.</div>
+  </section>
+
+  <section class="card"><b>2. Automatic referee</b><div class="row"><button class="go" id="autoBtn" onclick="App.toggleAuto()">▶ Enable Auto Ref</button><button onclick="App.undo()">↶ Undo</button><button class="warn" onclick="App.resetGame()">Reset Game</button></div><div class="row"><label class="tiny mut">First throw <select id="firstTeam" onchange="App.setFirstTeam(this.value)"><option value="A">Team A</option><option value="B">Team B</option></select></label><label class="tiny mut">Detection <select id="sensitivity" onchange="App.setSensitivity(this.value)"><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select></label></div><div class="metric">Bag motion <span id="motionPct">0%</span></div><div class="bar"><i id="motionBar"></i></div><div class="tiny mut" style="margin-top:8px">V5.0 follows the calibrated bag colors, waits for the throw to settle, compares the board before/after, and records exactly one result. Team color is used first; alternating-team order is the fallback.</div></section>
+
+  <section class="card"><b>3. Review last AI call</b><div class="review"><img id="thumb" class="thumb" alt="Last detection snapshot"><div><div id="reviewText" class="mut">No throw detected yet.</div><div class="row"><button onclick="App.correct('board')">Correct → Board +1</button><button onclick="App.correct('hole')">Correct → Hole +3</button><button onclick="App.correct('miss')">Correct → Miss</button><button onclick="App.swapTeam()">Swap Team</button></div></div></div></section>
+
+  <section class="card"><b>Manual scoring / testing</b><div class="row"><select id="teamSel"><option value="A">Team A</option><option value="B">Team B</option></select><button onclick="App.manual('board')">Board +1</button><button onclick="App.manual('hole')">Hole +3</button><button onclick="App.manual('miss')">Miss</button><button onclick="App.demoThrow()">🎬 Demo AI Throw</button></div></section>
+  <section class="card"><b>Decision log</b><div id="log" class="log"></div></section>
+  <section class="card tiny mut httpsNote"><b>Important for Android:</b> open this app from an <b>HTTPS web address</b>, not <code>content://downloads/...</code>. After it works in Chrome, use Chrome’s menu → <b>Add to Home screen / Install app</b>.</section>
+  <div class="version">Cornhole AI Camera Ref V5.0 · Stable-bag AutoScore build</div>
+
+  <script src="./vision.js"></script>
+  <script src="./app.js"></script>
+</main></body></html>
