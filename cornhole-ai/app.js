@@ -12,7 +12,9 @@ const App=(()=>{
   function setDiag(id,state,text){const el=$(id);if(!el)return;el.className='diagItem '+state;el.querySelector('.diagValue').textContent=text}
   function expectedTeam(){return game.throws%2===0?game.firstTeam:(game.firstTeam==='A'?'B':'A')}
   function render(){
-    $('sa').textContent=game.A; $('sb').textContent=game.B; $('ra').textContent=game.raw.A; $('rb').textContent=game.raw.B; $('tc').textContent=game.throws; $('rn').textContent=game.round;
+    const liveA=game.A+Math.max(0,game.raw.A-game.raw.B);
+    const liveB=game.B+Math.max(0,game.raw.B-game.raw.A);
+    $('sa').textContent=liveA; $('sb').textContent=liveB; $('ra').textContent=game.raw.A; $('rb').textContent=game.raw.B; $('tc').textContent=game.throws; $('rn').textContent=game.round;
     $('nextThrow').textContent=`NEXT: ${teamCaps(expectedTeam())}`;
     if($('firstTeam').value!==game.firstTeam)$('firstTeam').value=game.firstTeam;
 
