@@ -1,9 +1,12 @@
+/* Yard Vision V9 — stable full-yard CV core with active-board overlay.
+   V9 reliability features (duplicate guard, overlap-safe throw identity,
+   automatic round completion and board switching) live in app.js. */
 const Vision = (() => {
   let video, overlay, octx, proc, pctx;
   let running = false, auto = false, sensitivity = 'high';
   let onThrow = null, onMetrics = null;
   let cal = { boards: [] };
-  let tracks = [];
+  let tracks = [], nextTrackId = 1;
   let lastGray = null, lastTeamMap = null, stableMap = null, beforeMap = null;
   let lastVideoTime = -1, lastT = 0, fps = 0, frameNo = 0;
   let active = false, quietFrames = 0, activeFrames = 0, cooldownFrames = 0;
@@ -116,7 +119,7 @@ const Vision = (() => {
 
   function avgCornerDistance(a,b){let s=0;for(let i=0;i<4;i++)s+=dist(a[i],b[i]);return s/4}
   function smoothCorners(a,b){return a.map((p,i)=>({x:p.x*.70+b[i].x*.30,y:p.y*.70+b[i].y*.30}))}
-  function saveCal(){try{localStorage.setItem('cornhole-v7-2-yard-cal',JSON.stringify(cal))}catch{}}
+  function saveCal(){try{localStorage.setItem('cornhole-v9-yard-cal',JSON.stringify(cal))}catch{}}
   function dispatchCal(){window.dispatchEvent(new CustomEvent('calibrationchange',{detail:getCalibration()}))}
   function syncCal(W,H){
     const locked=tracks.filter(t=>t.hits>=2&&t.misses<24&&t.confidence>.38).slice(0,2);
@@ -147,8 +150,8 @@ const Vision = (() => {
         }
       }else t.misses++;
     }
-    for(let i=0;i<candidates.length;i++)if(!used.has(i)){const c=candidates[i];tracks.push({corners:c.corners,confidence:c.confidence,hits:1,misses:0,hole:c.hole?.center||null,holeR:c.hole?.r||0,holeConfidence:c.hole?.confidence||0,holeMisses:c.hole?0:1})}
-    tracks=tracks.filter(t=>t.misses<30).sort((a,b)=>(b.hits-b.misses)-(a.hits-a.misses)||b.confidence-a.confidence).slice(0,3);syncCal(W,H);
+    for(let i=0;i<candidates.length;i++)if(!used.has(i)){const c=candidates[i];tracks.push({id:nextTrackId++,corners:c.corners,confidence:c.confidence,hits:1,misses:0,hole:c.hole?.center||null,holeR:c.hole?.r||0,holeConfidence:c.hole?.confidence||0,holeMisses:c.hole?0:1})}
+    tracks=tracks.filter(t=>t.misses<30).sort((a,b)=>(a.id||0)-(b.id||0)).slice(0,3);syncCal(W,H);
   }
 
   function boardsProc(W,H){
@@ -184,11 +187,15 @@ const Vision = (() => {
 
   function draw(){
     fitCanvas();const r=overlay.getBoundingClientRect(),b=displayBox();octx.clearRect(0,0,r.width,r.height);octx.font='13px system-ui';
-    octx.save();octx.strokeStyle='#22d07f';octx.lineWidth=2;octx.setLineDash([10,7]);octx.strokeRect(b.ox+2,b.oy+2,Math.max(0,b.w-4),Math.max(0,b.h-4));octx.setLineDash([]);octx.fillStyle='#22d07f';octx.fillText('FULL YARD VISION',b.ox+9,b.oy+19);octx.restore();
+    octx.save();octx.strokeStyle='#22d07f';octx.lineWidth=2;octx.setLineDash([10,7]);octx.strokeRect(b.ox+2,b.oy+2,Math.max(0,b.w-4),Math.max(0,b.h-4));octx.setLineDash([]);octx.fillStyle='#22d07f';octx.fillText('FULL YARD VISION V9',b.ox+9,b.oy+19);octx.restore();
+    const requested=Number.isInteger(window.__yardActiveBoard)?window.__yardActiveBoard:0;
     (cal.boards||[]).forEach((board,idx)=>{
-      if(board.poly?.length!==4)return;octx.strokeStyle='#35cfff';octx.fillStyle='#35cfff';octx.lineWidth=4;octx.beginPath();board.poly.forEach((p,i)=>{const q=videoToDisp(p);i?octx.lineTo(q.x,q.y):octx.moveTo(q.x,q.y)});octx.closePath();octx.stroke();
-      const q=videoToDisp(board.poly[0]);octx.fillText(`BOARD ${idx+1}`,q.x+7,q.y-7);
-      if(board.hole&&board.holeEdge){const h=videoToDisp(board.hole),e=videoToDisp(board.holeEdge),rr=Math.hypot(e.x-h.x,e.y-h.y);octx.strokeStyle='#ffd166';octx.lineWidth=4;octx.beginPath();octx.arc(h.x,h.y,rr,0,Math.PI*2);octx.stroke();octx.fillStyle='#ffd166';octx.fillText(`HOLE ${idx+1} TRACKED`,h.x+rr+5,h.y)}
+      if(board.poly?.length!==4)return;
+      const isActive=(cal.boards.length<2||idx===requested);
+      octx.strokeStyle=isActive?'#22d07f':'#35cfff';octx.fillStyle=isActive?'#22d07f':'#35cfff';octx.lineWidth=isActive?5:3;
+      octx.beginPath();board.poly.forEach((p,i)=>{const q=videoToDisp(p);i?octx.lineTo(q.x,q.y):octx.moveTo(q.x,q.y)});octx.closePath();octx.stroke();
+      const q=videoToDisp(board.poly[0]);octx.fillText(isActive?`ACTIVE BOARD ${idx+1}`:`BOARD ${idx+1}`,q.x+7,q.y-7);
+      if(board.hole&&board.holeEdge){const h=videoToDisp(board.hole),e=videoToDisp(board.holeEdge),rr=Math.hypot(e.x-h.x,e.y-h.y);octx.strokeStyle='#ffd166';octx.lineWidth=4;octx.beginPath();octx.arc(h.x,h.y,rr,0,Math.PI*2);octx.stroke();octx.fillStyle='#ffd166';octx.fillText(`HOLE ${idx+1}`,h.x+rr+5,h.y)}
     });
     if(lastCentroid){const c=videoToDisp(lastCentroid);octx.strokeStyle=lastTeam==='B'?'#ff4458':'#2d8cff';octx.lineWidth=4;octx.beginPath();octx.arc(c.x,c.y,17,0,Math.PI*2);octx.stroke();octx.fillStyle='#fff';octx.fillText(lastTeam==='B'?'RED BAG':'BLUE BAG',c.x+20,c.y)}
   }
@@ -211,7 +218,7 @@ const Vision = (() => {
           }else if(cooldownFrames===0)stableMap=cloneMap(teamMap);
         }else{active=false;quietFrames=0;stableMap=cloneMap(teamMap)}
         lastGray=gray;lastTeamMap=teamMap;
-        if(onMetrics)onMetrics({motion,fps,active,changedColor:changed,boardReady:boards.length>0,holeReady:boards.some(b=>!!b.hole),boardCount:boards.length,holeCount:boards.filter(b=>!!b.hole).length,boardConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.confidence||0)),holeConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.holeConfidence||0)),fullYard:true});
+        if(onMetrics)onMetrics({motion,fps,active,changedColor:changed,boardReady:boards.length>0,holeReady:boards.some(b=>!!b.hole),boardCount:boards.length,holeCount:boards.filter(b=>!!b.hole).length,boardConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.confidence||0)),holeConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.holeConfidence||0)),fullYard:true,activeBoardIndex:Number.isInteger(window.__yardActiveBoard)?window.__yardActiveBoard:0});
       }draw();
     }requestAnimationFrame(processFrame);
   }
@@ -219,9 +226,15 @@ const Vision = (() => {
   function init(v,c,throwCb,metricsCb){video=v;overlay=c;octx=c.getContext('2d');proc=document.createElement('canvas');pctx=proc.getContext('2d',{willReadFrequently:true});onThrow=throwCb;onMetrics=metricsCb;resetTracking();if(!running){running=true;requestAnimationFrame(processFrame)}}
   function setAuto(v){auto=!!v;resetTracking()}
   function setSensitivity(v){sensitivity=['high','normal','low'].includes(v)?v:'high';resetTracking()}
-  function rescan(){cal={boards:[]};tracks=[];saveCal();resetTracking();dispatchCal()}
+  function rescan(){cal={boards:[]};tracks=[];nextTrackId=1;saveCal();resetTracking();dispatchCal()}
   function getCalibration(){return JSON.parse(JSON.stringify(cal))}
-  function loadCal(){try{const x=JSON.parse(localStorage.getItem('cornhole-v7-2-yard-cal'));if(x?.boards)cal=x}catch{}const first=cal.boards?.[0];cal.board=first?.poly||[];cal.hole=first?.hole||null;cal.holeEdge=first?.holeEdge||null;cal.boardConfidence=first?.confidence||0;cal.holeConfidence=first?.holeConfidence||0;return getCalibration()}
+  function loadCal(){
+    try{
+      const x=JSON.parse(localStorage.getItem('cornhole-v9-yard-cal')||localStorage.getItem('cornhole-v7-2-yard-cal'));
+      if(x?.boards)cal=x
+    }catch{}
+    const first=cal.boards?.[0];cal.board=first?.poly||[];cal.hole=first?.hole||null;cal.holeEdge=first?.holeEdge||null;cal.boardConfidence=first?.confidence||0;cal.holeConfidence=first?.holeConfidence||0;return getCalibration()
+  }
   function snapshot(){const c=document.createElement('canvas');c.width=320;c.height=Math.max(1,Math.round(320*video.videoHeight/video.videoWidth));c.getContext('2d').drawImage(video,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.72)}
   return{init,setAuto,setSensitivity,rescan,getCalibration,loadCal,snapshot};
 })();
