@@ -5,6 +5,31 @@ const App=(()=>{
   let frameCount=0,frameWatchTimer=0,installPrompt=null;
   let game={A:0,B:0,raw:{A:0,B:0},throws:0,round:1,history:[],lastDecision:null,firstTeam:'A'};
   let cal=Vision.loadCal();
+  let audioCtx=null;
+
+  function ensureAudio(){
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;
+      if(!AC)return null;
+      if(!audioCtx)audioCtx=new AC();
+      if(audioCtx.state==='suspended')audioCtx.resume();
+      return audioCtx;
+    }catch{return null}
+  }
+  function cowbellHit(offset=0,accent=1){
+    const ctx=ensureAudio();if(!ctx)return;
+    const t=ctx.currentTime+offset,gain=ctx.createGain(),filter=ctx.createBiquadFilter();
+    filter.type='bandpass';filter.frequency.setValueAtTime(1150,t);filter.Q.setValueAtTime(1.1,t);
+    gain.gain.setValueAtTime(.0001,t);gain.gain.exponentialRampToValueAtTime(.23*accent,t+.008);gain.gain.exponentialRampToValueAtTime(.0001,t+.25);
+    gain.connect(filter);filter.connect(ctx.destination);
+    [540,800].forEach((f,i)=>{const o=ctx.createOscillator();o.type='square';o.frequency.setValueAtTime(f,t);o.frequency.exponentialRampToValueAtTime(f*(i?0.965:0.94),t+.20);o.connect(gain);o.start(t);o.stop(t+.26)});
+  }
+  function playCowbell(points){
+    if(points<=0)return;
+    ensureAudio();
+    const hits=points>=3?3:1;
+    for(let i=0;i<hits;i++)cowbellHit(i*.16,i===0?1:.88);
+  }
 
   const teamName=t=>t==='A'?'Team Blue':'Team Red';
   const teamCaps=t=>t==='A'?'TEAM BLUE':'TEAM RED';
@@ -22,7 +47,7 @@ const App=(()=>{
     $('s1').classList.toggle('done',boardReady);
     $('s2').classList.toggle('done',holeReady);
     $('boardStatus').textContent=boardReady?`Tracked in yard ${Math.round((cal.boardConfidence||.82)*100)}%`:'Scanning yard…';
-    $('holeStatus').textContent=holeReady?`Locked ${Math.round((cal.holeConfidence||.82)*100)}%`:boardReady?'Scanning inside board…':'Waiting for board…';
+    $('holeStatus').textContent=holeReady?`Tracking hole ${Math.round((cal.holeConfidence||.82)*100)}%`:boardReady?'Scanning inside board…':'Waiting for board…';
 
     const mediaReady=!!stream||!!$('cam')?.getAttribute('src');
     $('autoBtn').disabled=!(boardReady&&holeReady&&mediaReady);
@@ -43,7 +68,8 @@ const App=(()=>{
     game.lastDecision={team,result,source,confidence,snapshot,centroid,points:p};
     $('thumb').src=snapshot||'';
     $('reviewText').textContent=`${source}: ${name} → ${result.toUpperCase()} (${p} raw), confidence ${Math.round(confidence*100)}%`;
-    say(result==='hole'?`${name}, three points`:result==='board'?`${name}, one point`:`${name}, miss`);
+    if(p>0)playCowbell(p);
+    setTimeout(()=>say(result==='hole'?`${name}, three points`:result==='board'?`${name}, one point`:`${name}, miss`),p>0?180:0);
     log(`${source}: ${name} ${result.toUpperCase()} → ${p} raw (${Math.round(confidence*100)}%)`);
     if(game.throws>=8)finishRound();
     render();
@@ -69,8 +95,8 @@ const App=(()=>{
     $('motionPct').textContent=Math.round(m.motion*100)+'%';
     $('motionBar').style.width=Math.round(m.motion*100)+'%';
     $('fps').textContent=Math.round(m.fps)+' fps';
-    if(auto) $('visionState').textContent=m.active?'Bag moving…':(m.boardReady&&m.holeReady?'Watching yard':'Scanning yard…');
-    else $('visionState').textContent=frameCount?(m.boardReady&&m.holeReady?'Yard locked':'Scanning yard…'):'Waiting for frames';
+    if(auto) $('visionState').textContent=m.active?'Bag moving…':(m.boardReady&&m.holeReady?'Watching yard · hole tracked':'Scanning yard…');
+    else $('visionState').textContent=frameCount?(m.boardReady&&m.holeReady?'Yard locked · hole tracked':'Scanning yard…'):'Waiting for frames';
   }
 
   function baseDiagnostics(extra=''){
@@ -149,7 +175,7 @@ const App=(()=>{
       startFrameWatch(v); await populateCameras(); Vision.init(v,$('overlay'),onAIThrow,onMetrics);
       const size=`${v.videoWidth||st.width||0}×${v.videoHeight||st.height||0}`;
       $('cameraMeta').textContent=`${track.label||'Camera'} · ${size}`;
-      $('calHelp').textContent='Camera connected. Keep a wide yard view that includes the board and nearby throwers. V7 will track the board automatically.';
+      $('calHelp').textContent='Camera connected. Keep a wide yard view that includes the board and nearby throwers. V7 will track the board and hole automatically.';
       $('sys').textContent='CAMERA STARTING'; log(`Camera opened: ${track.label||'camera'} ${size} state=${track.readyState}`);
       await new Promise(r=>setTimeout(r,900)); if(isAndroid)await forceCanvasPreview(true);
       baseDiagnostics(`Camera permission allowed. Track: ${track.readyState}. Video: ${size}. Aim wide enough to keep the board and players in view.`);
@@ -174,24 +200,24 @@ const App=(()=>{
   async function loadClip(input){
     const file=input.files?.[0]; if(!file)return;
     if(stream)stopCamera(); const url=URL.createObjectURL(file), v=$('cam'); v.srcObject=null; v.src=url; v.muted=true; v.loop=true; v.controls=true;
-    try{await v.play(); Vision.init(v,$('overlay'),onAIThrow,onMetrics); $('sys').textContent='TEST VIDEO'; $('calHelp').textContent='Recorded video loaded. V7 will scan the whole frame and try to track the board automatically.'; setDiag('dFrames','ok','VIDEO'); baseDiagnostics('Recorded video loaded. This tests yard tracking and automatic scoring separately from live-camera permission.'); log('Recorded camera clip loaded'); render()}catch(e){baseDiagnostics('Could not play selected video: '+e.message)}
+    try{await v.play(); Vision.init(v,$('overlay'),onAIThrow,onMetrics); $('sys').textContent='TEST VIDEO'; $('calHelp').textContent='Recorded video loaded. V7 will scan the whole frame and track the board and hole automatically.'; setDiag('dFrames','ok','VIDEO'); baseDiagnostics('Recorded video loaded. This tests yard tracking and automatic scoring separately from live-camera permission.'); log('Recorded camera clip loaded'); render()}catch(e){baseDiagnostics('Could not play selected video: '+e.message)}
   }
   async function flipCamera(){facing=facing==='environment'?'user':'environment'; selectedDeviceId=''; await startCamera()}
   function rescanYard(){Vision.rescan(); auto=false; Vision.setAuto(false); $('call').textContent=''; $('calHelp').textContent='Rescanning the yard. Hold the board in view and keep the phone steady for a moment.'; log('Rescanning yard for board + hole');}
-  function toggleAuto(){auto=!auto; Vision.setAuto(auto); if(auto)say('Automatic referee enabled'); else $('call').textContent=''; log(auto?'Automatic referee enabled':'Automatic referee disabled'); render()}
+  function toggleAuto(){ensureAudio();auto=!auto; Vision.setAuto(auto); if(auto)say('Automatic referee enabled'); else $('call').textContent=''; log(auto?'Automatic referee enabled · cowbell scoring sounds armed':'Automatic referee disabled'); render()}
   function setFirstTeam(team){game.firstTeam=team==='B'?'B':'A'; log(`First throw set to ${teamName(game.firstTeam)}`); render()}
   function setSensitivity(v){Vision.setSensitivity(v); log(`Detection sensitivity: ${v}`)}
-  function manual(result){addThrow($('teamSel').value,result,'MANUAL',1,null,null)}
+  function manual(result){ensureAudio();addThrow($('teamSel').value,result,'MANUAL',1,null,null)}
   function undo(){if(!game.history.length)return; const x=JSON.parse(game.history.pop()); game.A=x.A; game.B=x.B; game.raw=x.raw; game.throws=x.throws; game.round=x.round; game.lastDecision=x.lastDecision; game.firstTeam=x.firstTeam||game.firstTeam; $('winner').textContent=x.w; $('call').textContent=x.call; log('Previous decision undone'); render()}
   function correct(result){if(!game.lastDecision)return; const prev=game.lastDecision; undo(); addThrow(prev.team,result,'REVIEW CORRECTION',1,prev.snapshot,prev.centroid)}
   function swapTeam(){if(!game.lastDecision)return; const prev=game.lastDecision; undo(); addThrow(prev.team==='A'?'B':'A',prev.result,'REVIEW CORRECTION',1,prev.snapshot,prev.centroid)}
   function resetGame(){const first=$('firstTeam')?.value||'A'; game={A:0,B:0,raw:{A:0,B:0},throws:0,round:1,history:[],lastDecision:null,firstTeam:first}; $('winner').textContent=''; $('call').textContent=''; $('thumb').removeAttribute('src'); $('reviewText').textContent='No throw detected yet.'; $('log').innerHTML=''; Vision.setAuto(auto); log('New match'); render()}
-  function demoThrow(){const team=Math.random()<.5?'A':'B', x=Math.random(), result=x<.28?'hole':x<.78?'board':'miss'; addThrow(team,result,'DEMO YARD VISION',.9+Math.random()*.08,null,null)}
+  function demoThrow(){ensureAudio();const team=Math.random()<.5?'A':'B', x=Math.random(), result=x<.28?'hole':x<.78?'board':'miss'; addThrow(team,result,'DEMO YARD VISION',.9+Math.random()*.08,null,null)}
   async function installApp(){if(installPrompt){installPrompt.prompt(); await installPrompt.userChoice; installPrompt=null; $('installBtn').hidden=true}else{baseDiagnostics('To install: Chrome menu (⋮) → Add to Home screen / Install app. The app must first be opened from its HTTPS address.')}}
 
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault(); installPrompt=e; $('installBtn').hidden=false});
   window.addEventListener('appinstalled',()=>{installPrompt=null; $('installBtn').hidden=true; log('PWA installed')});
   window.addEventListener('calibrationchange',e=>{cal=e.detail; render()});
-  Vision.setSensitivity($('sensitivity')?.value||'high'); baseDiagnostics(); log('Cornhole AI Camera V7.0 Yard Vision Android PWA loaded'); render();
+  Vision.setSensitivity($('sensitivity')?.value||'high'); baseDiagnostics(); log('Cornhole AI Camera V7 Yard Vision · continuous hole tracking + cowbell scoring loaded'); render();
   return {startCamera,stopCamera,flipCamera,selectCamera,forceCanvasPreview,loadClip,rescanYard,toggleAuto,setFirstTeam,setSensitivity,manual,undo,correct,swapTeam,resetGame,demoThrow,installApp}
 })();
