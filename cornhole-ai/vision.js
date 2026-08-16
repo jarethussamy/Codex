@@ -52,8 +52,6 @@ const Vision = (() => {
     if(v<.38||pixelTeam(r,g,b))return false;
     const grass=h>=65&&h<=175&&s>.18;
     if(grass)return false;
-    // Cornhole board tops are normally much brighter and less saturated than grass.
-    // Keeping this intentionally strict prevents large lawn patches from becoming fake boards.
     return lum>.55&&s<.52;
   }
   function integralGray(d,W,H){
@@ -150,15 +148,33 @@ const Vision = (() => {
         if(d0<bestD){bestD=d0;best=i}
       }
       if(best>=0&&bestD<Math.max(10,W*.11)){
-        const c=candidates[best];matched.add(best);track.corners=smoothCorners(track.corners,c.corners);track.confidence=track.confidence*.72+c.confidence*.28;track.hits++;track.misses=0;
+        const c=candidates[best];
+        matched.add(best);
+        const oldCorners=track.corners.map(p=>({x:p.x,y:p.y}));
+        const oldCenter=polyCenter(oldCorners),oldArea=Math.max(1,polygonArea(oldCorners));
+        track.corners=smoothCorners(track.corners,c.corners);
+        const newCenter=polyCenter(track.corners),newArea=Math.max(1,polygonArea(track.corners));
+        const boardScale=Math.max(.72,Math.min(1.38,Math.sqrt(newArea/oldArea)));
+        track.confidence=track.confidence*.72+c.confidence*.28;track.hits++;track.misses=0;
         if(c.hole){
-          track.hole=track.hole?{x:track.hole.x*.7+c.hole.center.x*.3,y:track.hole.y*.7+c.hole.center.y*.3}:c.hole.center;
-          track.holeR=track.holeR?track.holeR*.7+c.hole.r*.3:c.hole.r;track.holeConfidence=Math.max(track.holeConfidence||0,c.hole.confidence);
+          track.hole=track.hole?{x:track.hole.x*.64+c.hole.center.x*.36,y:track.hole.y*.64+c.hole.center.y*.36}:c.hole.center;
+          track.holeR=track.holeR?track.holeR*.64+c.hole.r*.36:c.hole.r;
+          track.holeConfidence=track.holeConfidence?track.holeConfidence*.72+c.hole.confidence*.28:c.hole.confidence;
+          track.holeMisses=0;
+        }else if(track.hole){
+          track.hole={
+            x:newCenter.x+(track.hole.x-oldCenter.x)*boardScale,
+            y:newCenter.y+(track.hole.y-oldCenter.y)*boardScale
+          };
+          track.holeR=Math.max(1,track.holeR*boardScale);
+          track.holeConfidence=(track.holeConfidence||.65)*.985;
+          track.holeMisses=(track.holeMisses||0)+1;
+          if(track.holeMisses>18){track.hole=null;track.holeR=0;track.holeConfidence=0;track.holeMisses=0}
         }
       }else track.misses++;
     }
     for(let i=0;i<candidates.length;i++)if(!matched.has(i)){
-      const c=candidates[i];boardTracks.push({corners:c.corners,confidence:c.confidence,hits:1,misses:0,hole:c.hole?.center||null,holeR:c.hole?.r||0,holeConfidence:c.hole?.confidence||0});
+      const c=candidates[i];boardTracks.push({corners:c.corners,confidence:c.confidence,hits:1,misses:0,hole:c.hole?.center||null,holeR:c.hole?.r||0,holeConfidence:c.hole?.confidence||0,holeMisses:c.hole?0:1});
     }
     boardTracks=boardTracks.filter(t=>t.misses<42).sort((a,b)=>(b.hits-b.misses)-(a.hits-a.misses)||b.confidence-a.confidence).slice(0,2);
     const locked=boardTracks.filter(t=>t.hits>=2&&t.confidence>.42);
@@ -231,7 +247,7 @@ const Vision = (() => {
       octx.lineWidth=4;octx.strokeStyle='#35cfff';octx.fillStyle='#35cfff';octx.beginPath();
       board.poly.forEach((p,i)=>{const q=videoToDisp(p);i?octx.lineTo(q.x,q.y):octx.moveTo(q.x,q.y)});octx.closePath();octx.stroke();
       const q=videoToDisp(board.poly[0]);octx.fillText(`BOARD ${idx+1}`,q.x+8,q.y-8);
-      if(board.hole&&board.holeEdge){const h=videoToDisp(board.hole),e=videoToDisp(board.holeEdge),rr=Math.hypot(e.x-h.x,e.y-h.y);octx.strokeStyle='#ffd166';octx.lineWidth=4;octx.beginPath();octx.arc(h.x,h.y,rr,0,Math.PI*2);octx.stroke();octx.fillStyle='#ffd166';octx.fillText(`HOLE ${idx+1}`,h.x+rr+5,h.y)}
+      if(board.hole&&board.holeEdge){const h=videoToDisp(board.hole),e=videoToDisp(board.holeEdge),rr=Math.hypot(e.x-h.x,e.y-h.y);octx.strokeStyle='#ffd166';octx.lineWidth=4;octx.beginPath();octx.arc(h.x,h.y,rr,0,Math.PI*2);octx.stroke();octx.fillStyle='#ffd166';octx.fillText(`HOLE ${idx+1} TRACKED`,h.x+rr+5,h.y)}
     });
     if(lastCentroid){const c=videoToDisp(lastCentroid);octx.strokeStyle=lastTeam==='B'?'#ff4458':'#2d8cff';octx.lineWidth=4;octx.beginPath();octx.arc(c.x,c.y,18,0,Math.PI*2);octx.stroke();octx.fillStyle='#fff';octx.fillText(lastTeam==='B'?'RED BAG':'BLUE BAG',c.x+21,c.y)}
   }
@@ -244,7 +260,7 @@ const Vision = (() => {
         lastVideoTime=vt;frameNo++;
         const W=288,H=Math.max(96,Math.round(288*video.videoHeight/video.videoWidth));proc.width=W;proc.height=H;pctx.drawImage(video,0,0,W,H);
         const d=pctx.getImageData(0,0,W,H).data;
-        if(frameNo%10===0||!(cal.boards?.length))autoDetect(d,W,H);
+        if(frameNo%6===0||!(cal.boards?.length))autoDetect(d,W,H);
         const gray=new Uint8Array(W*H),teamMap=new Uint8Array(W*H),boards=boardsProc(W,H);
         let changedColor=0,sx=0,sy=0,fa=0,fb=0;
         for(let y=0;y<H;y++)for(let x=0;x<W;x++){
@@ -265,7 +281,7 @@ const Vision = (() => {
           }else if(cooldownFrames===0)stableMap=cloneMap(teamMap);
         }else{active=false;quietFrames=0;stableMap=cloneMap(teamMap)}
         lastGray=gray;lastTeamMap=teamMap;
-        if(onMetrics)onMetrics({motion,fps,centroid:lastCentroid,team:lastTeam,active,changedColor,boardReady:boards.length>0,holeReady:boards.some(b=>!!b.hole),boardCount:boards.length,holeCount:boards.filter(b=>!!b.hole).length,boardConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.confidence||0)),holeConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.holeConfidence||0)),fullYard:true});
+        if(onMetrics)onMetrics({motion,fps,centroid:lastCentroid,team:lastTeam,active,changedColor,boardReady:boards.length>0,holeReady:boards.some(b=>!!b.hole),boardCount:boards.length,holeCount:boards.filter(b=>!!b.hole).length,boardConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.confidence||0)),holeConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.holeConfidence||0)),fullYard:true,holeTracking:true});
       }
       draw();
     }
