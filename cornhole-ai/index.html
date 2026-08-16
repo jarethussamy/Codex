@@ -6,13 +6,13 @@
   <meta name="theme-color" content="#0d2230">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Cornhole AI Camera V6.0 AutoCal</title>
+  <title>Cornhole AI Camera V7.0 Yard Vision</title>
   <link rel="stylesheet" href="./style.css">
 </head>
 <body><main>
-  <header><span class="pill">🤳 CAMERA-ONLY V6.0</span><span class="pill" id="sys">READY</span></header>
+  <header><span class="pill">🤳 YARD VISION V7.0</span><span class="pill" id="sys">READY</span></header>
   <h1>Cornhole AI Camera Ref</h1>
-  <div class="mut">Android live-camera build · automatic board + hole detection · blue/red bag recognition · automatic scoring.</div>
+  <div class="mut">Full-yard Android live-camera build · automatic board tracking · automatic hole lock · blue/red bag recognition · automatic scoring.</div>
 
   <section class="card scores">
     <div class="team"><b class="a">TEAM BLUE</b><div class="n a" id="sa">0</div><small>GAME</small><div class="roundRaw">ROUND <b id="ra">0</b></div></div>
@@ -22,20 +22,20 @@
   <div id="winner" class="winner"></div><div id="call"></div>
 
   <section class="card">
-    <b>Quick setup — no tapping the board or hole</b>
+    <b>Quick setup — whole-yard view</b>
     <div class="setupGuide">
       <div><strong>1</strong><span>Start Rear Camera</span></div>
-      <div><strong>2</strong><span>Point the phone so the whole board is visible</span></div>
-      <div><strong>3</strong><span>Board outline locks automatically</span></div>
-      <div><strong>4</strong><span>Hole center + size lock automatically</span></div>
+      <div><strong>2</strong><span>Aim wide so players and the board are visible</span></div>
+      <div><strong>3</strong><span>Yard scan finds the board automatically</span></div>
+      <div><strong>4</strong><span>The hole locks automatically inside the tracked board</span></div>
       <div><strong>5</strong><span>Blue bags = Team Blue · Red bags = Team Red</span></div>
       <div><strong>6</strong><span>Tap Enable Auto Ref</span></div>
-      <div><strong>7</strong><span>Throw a bag — team and 0 / 1 / 3 points are automatic</span></div>
+      <div><strong>7</strong><span>Throw a bag — AI tracks the throw and scores 0 / 1 / 3 automatically</span></div>
     </div>
   </section>
 
   <section class="card">
-    <b>1. Camera + automatic setup</b>
+    <b>1. Camera + Yard Scan</b>
     <div class="diagGrid">
       <div id="dSecure" class="diagItem wait"><div class="diagLabel">HTTPS</div><div class="diagValue">CHECKING</div></div>
       <div id="dApi" class="diagItem wait"><div class="diagLabel">Camera API</div><div class="diagValue">CHECKING</div></div>
@@ -63,23 +63,23 @@
     </div>
 
     <div class="steps autoSteps">
-      <div class="step" id="s1"><b>Board</b><br><span class="tiny mut" id="boardStatus">Scanning automatically…</span></div>
+      <div class="step" id="s1"><b>Board</b><br><span class="tiny mut" id="boardStatus">Scanning yard…</span></div>
       <div class="step" id="s2"><b>Hole</b><br><span class="tiny mut" id="holeStatus">Waiting for board…</span></div>
       <div class="step done teamBlue"><b>Team Blue</b><br><span class="tiny">🔵 Blue bags</span></div>
       <div class="step done teamRed"><b>Team Red</b><br><span class="tiny">🔴 Red bags</span></div>
     </div>
-    <div class="row"><button onclick="App.rescanBoard()">◎ Rescan Board + Hole</button></div>
-    <div class="tiny mut" id="calHelp">Start the camera. V6 will find the board and hole by itself; keep the full board visible and hold the phone steady for a moment.</div>
+    <div class="row"><button onclick="App.rescanYard()">◎ Rescan Yard</button></div>
+    <div class="tiny mut" id="calHelp">Start the camera. V7 scans the whole yard, finds the board automatically, then tracks the board region for scoring while you keep a wider player-and-board view.</div>
   </section>
 
-  <section class="card"><b>2. Automatic referee</b><div class="row"><button class="go" id="autoBtn" onclick="App.toggleAuto()">▶ Enable Auto Ref</button><button onclick="App.undo()">↶ Undo</button><button class="warn" onclick="App.resetGame()">Reset Game</button></div><div class="row"><label class="tiny mut">First throw <select id="firstTeam" onchange="App.setFirstTeam(this.value)"><option value="A">Team Blue</option><option value="B">Team Red</option></select></label><label class="tiny mut">Detection <select id="sensitivity" onchange="App.setSensitivity(this.value)"><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select></label></div><div class="metric">Bag motion <span id="motionPct">0%</span></div><div class="bar"><i id="motionBar"></i></div><div class="tiny mut" style="margin-top:8px">V6.0 recognizes blue and red bags directly, waits for each throw to settle, then calls a miss, board +1, or hole +3. No bag-color sampling is required.</div></section>
+  <section class="card"><b>2. Automatic referee</b><div class="row"><button class="go" id="autoBtn" onclick="App.toggleAuto()">▶ Enable Auto Ref</button><button onclick="App.undo()">↶ Undo</button><button class="warn" onclick="App.resetGame()">Reset Game</button></div><div class="row"><label class="tiny mut">First throw <select id="firstTeam" onchange="App.setFirstTeam(this.value)"><option value="A">Team Blue</option><option value="B">Team Red</option></select></label><label class="tiny mut">Detection <select id="sensitivity" onchange="App.setSensitivity(this.value)"><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select></label></div><div class="metric">Bag motion <span id="motionPct">0%</span></div><div class="bar"><i id="motionBar"></i></div><div class="tiny mut" style="margin-top:8px">V7.0 keeps the full-yard camera view on screen, but internally tracks the board region for scoring. Blue and red bags are recognized automatically, then each throw is scored as miss, board +1, or hole +3.</div></section>
 
   <section class="card"><b>3. Review last AI call</b><div class="review"><img id="thumb" class="thumb" alt="Last detection snapshot"><div><div id="reviewText" class="mut">No throw detected yet.</div><div class="row"><button onclick="App.correct('board')">Correct → Board +1</button><button onclick="App.correct('hole')">Correct → Hole +3</button><button onclick="App.correct('miss')">Correct → Miss</button><button onclick="App.swapTeam()">Swap Team</button></div></div></div></section>
 
   <section class="card"><b>Manual scoring / testing</b><div class="row"><select id="teamSel"><option value="A">Team Blue</option><option value="B">Team Red</option></select><button onclick="App.manual('board')">Board +1</button><button onclick="App.manual('hole')">Hole +3</button><button onclick="App.manual('miss')">Miss</button><button onclick="App.demoThrow()">🎬 Demo AI Throw</button></div></section>
   <section class="card"><b>Decision log</b><div id="log" class="log"></div></section>
   <section class="card tiny mut httpsNote"><b>Important for Android:</b> open this app from an <b>HTTPS web address</b>, not <code>content://downloads/...</code>. After it works in Chrome, use Chrome’s menu → <b>Add to Home screen / Install app</b>.</section>
-  <div class="version">Cornhole AI Camera Ref V6.0 · Automatic board/hole + Blue/Red AutoScore</div>
+  <div class="version">Cornhole AI Camera Ref V7.0 · Yard Vision full-view tracker</div>
 
   <script src="./vision.js"></script>
   <script src="./app.js"></script>
