@@ -1,13 +1,13 @@
 const Vision = (() => {
   let video, overlay, octx, proc, pctx, running=false, auto=false;
-  let cal={board:[],hole:null,holeEdge:null,boardConfidence:0,holeConfidence:0};
-  let autoCalibrate=true, sensitivity='high';
+  let cal={boards:[],board:[],hole:null,holeEdge:null,boardConfidence:0,holeConfidence:0};
+  let sensitivity='high';
   let lastT=0, fps=0, lastVideoTime=-1, frameNo=0;
   let lastGray=null, lastTeamMap=null, stableMap=null, beforeMap=null;
   let active=false, quietFrames=0, activeFrames=0, cooldownFrames=0;
   let lastCentroid=null, lastTeam=null, onThrow=null, onMetrics=null;
-  let votesA=0, votesB=0, minHolePx=Infinity, lastMotionProc=null, maxBagMotion=0;
-  let boardCandidate=null, boardStableFrames=0, holeCandidate=null, holeStableFrames=0, boardMisses=0;
+  let votesA=0, votesB=0, lastMotionProc=null, maxBagMotion=0;
+  let boardTracks=[];
 
   function displayBox(){
     const r=overlay.getBoundingClientRect(), vw=Math.max(1,video?.videoWidth||1), vh=Math.max(1,video?.videoHeight||1);
@@ -24,279 +24,267 @@ const Vision = (() => {
     octx.setTransform(dpr,0,0,dpr,0,0);
   }
   function videoToDisp(p){const b=displayBox();return{x:b.ox+p.x*b.scale,y:b.oy+p.y*b.scale}}
+  function procToVideo(p,W,H){return{x:p.x/W*video.videoWidth,y:p.y/H*video.videoHeight}}
+  function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+  function polygonArea(poly){let a=0;for(let i=0,j=poly.length-1;i<poly.length;j=i++)a+=poly[j].x*poly[i].y-poly[i].x*poly[j].y;return Math.abs(a)/2}
   function pointInPoly(p,poly){
     let c=false;
     for(let i=0,j=poly.length-1;i<poly.length;j=i++){
-      if(((poly[i].y>p.y)!=(poly[j].y>p.y)) &&
-         (p.x<(poly[j].x-poly[i].x)*(p.y-poly[i].y)/(poly[j].y-poly[i].y+1e-9)+poly[i].x)) c=!c;
+      if(((poly[i].y>p.y)!=(poly[j].y>p.y)) && (p.x<(poly[j].x-poly[i].x)*(p.y-poly[i].y)/(poly[j].y-poly[i].y+1e-9)+poly[i].x)) c=!c;
     }
     return c;
   }
-  function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
-  function polygonArea(poly){let a=0;for(let i=0,j=poly.length-1;i<poly.length;j=i++)a+=poly[j].x*poly[i].y-poly[i].x*poly[j].y;return Math.abs(a)/2}
+  function polyCenter(poly){return {x:poly.reduce((s,p)=>s+p.x,0)/poly.length,y:poly.reduce((s,p)=>s+p.y,0)/poly.length}}
   function cloneMap(m){return m?new Uint8Array(m):null}
-  function procToVideo(p,W,H){return{x:p.x/W*video.videoWidth,y:p.y/H*video.videoHeight}}
-  function boardProc(W,H){return (cal.board||[]).map(p=>({x:p.x/video.videoWidth*W,y:p.y/video.videoHeight*H}))}
-  function holeProc(W,H){
-    if(!cal.hole||!cal.holeEdge)return null;
-    const h={x:cal.hole.x/video.videoWidth*W,y:cal.hole.y/video.videoHeight*H};
-    const e={x:cal.holeEdge.x/video.videoWidth*W,y:cal.holeEdge.y/video.videoHeight*H};
-    return {h,r:dist(h,e)};
-  }
-  function playBBox(poly,W,H){
-    if(poly.length!==4)return {x0:0,y0:0,x1:W-1,y1:H-1};
-    const xs=poly.map(p=>p.x), ys=poly.map(p=>p.y), minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
-    const px=(maxX-minX)*.62, py=(maxY-minY)*.46;
-    return {x0:Math.max(0,minX-px),y0:Math.max(0,minY-py),x1:Math.min(W-1,maxX+px),y1:Math.min(H-1,maxY+py)};
-  }
   function rgbToHsv(r,g,b){
-    r/=255; g/=255; b/=255;
-    const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
-    let h=0;
-    if(d){ if(max===r)h=60*(((g-b)/d)%6); else if(max===g)h=60*((b-r)/d+2); else h=60*((r-g)/d+4); }
-    if(h<0)h+=360;
-    return {h,s:max?d/max:0,v:max};
+    r/=255;g/=255;b/=255;const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;let h=0;
+    if(d){if(max===r)h=60*(((g-b)/d)%6);else if(max===g)h=60*((b-r)/d+2);else h=60*((r-g)/d+4)}
+    if(h<0)h+=360;return{h,s:max?d/max:0,v:max};
   }
   function pixelTeam(r,g,b){
-    const {h,s,v}=rgbToHsv(r,g,b);
-    if(s<.30||v<.14)return 0;
-    const blue=h>=185&&h<=255&&b>=r*1.08&&b>=g*1.02&&(b-Math.min(r,g)>18);
-    const red=(h<=18||h>=344)&&r>=g*1.12&&r>=b*1.06&&(r-Math.min(g,b)>22);
+    const {h,s,v}=rgbToHsv(r,g,b); if(s<.28||v<.13)return 0;
+    const blue=h>=180&&h<=260&&b>=r*1.06&&b>=g*1.01&&(b-Math.min(r,g)>15);
+    const red=(h<=22||h>=338)&&r>=g*1.10&&r>=b*1.04&&(r-Math.min(g,b)>18);
     return blue?1:red?2:0;
   }
-  function boardColorMatch(r,g,b,sr,sg,sb){
-    const lum=(r+g+b)/3, sl=(sr+sg+sb)/3;
-    if(Math.abs(lum-sl)>64)return false;
-    const sum=r+g+b+1, ss=sr+sg+sb+1;
-    const chroma=Math.hypot(r/sum-sr/ss,g/sum-sg/ss,b/sum-sb/ss);
-    return chroma<.178;
-  }
-  function regionFromSeed(d,W,H,sx,sy){
-    const si=(sy*W+sx)*4, sr=d[si], sg=d[si+1], sb=d[si+2], sl=(sr+sg+sb)/3;
-    if(sl<36||sl>245||pixelTeam(sr,sg,sb))return null;
-    const seen=new Uint8Array(W*H), q=new Int32Array(W*H);
-    let head=0, tail=0; q[tail++]=sy*W+sx; seen[sy*W+sx]=1;
-    let count=0,minX=W,maxX=0,minY=H,maxY=0,sumX=0,sumY=0;
-    let tl=null,tr=null,br=null,bl=null,tlv=Infinity,trv=-Infinity,brv=-Infinity,blv=Infinity;
-    while(head<tail && count<W*H*.75){
-      const idx=q[head++], x=idx%W, y=(idx/W)|0, j=idx*4, r=d[j], g=d[j+1], b=d[j+2];
-      if(!boardColorMatch(r,g,b,sr,sg,sb))continue;
-      count++; sumX+=x; sumY+=y; if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y;
-      const s=x+y, dd=x-y;
-      if(s<tlv){tlv=s; tl={x,y}} if(dd>trv){trv=dd; tr={x,y}} if(s>brv){brv=s; br={x,y}} if(dd<blv){blv=dd; bl={x,y}}
-      const n1=idx-1,n2=idx+1,n3=idx-W,n4=idx+W;
-      if(x>0&&!seen[n1]){seen[n1]=1;q[tail++]=n1}
-      if(x<W-1&&!seen[n2]){seen[n2]=1;q[tail++]=n2}
-      if(y>0&&!seen[n3]){seen[n3]=1;q[tail++]=n3}
-      if(y<H-1&&!seen[n4]){seen[n4]=1;q[tail++]=n4}
-    }
-    if(count<220)return null;
-    const bw=maxX-minX+1,bh=maxY-minY+1,frac=count/(W*H),bboxFrac=bw*bh/(W*H),cx=sumX/count,cy=sumY/count;
-    if(frac<.008||frac>.62||bw<W*.07||bh<H*.08||bboxFrac>.82)return null;
-    const centerPenalty=Math.hypot((cx-W*.55)/(W*.65),(cy-H*.58)/(H*.62));
-    const fill=count/Math.max(1,bw*bh),aspect=bh/Math.max(1,bw),aspectScore=aspect>.22&&aspect<4.8?1:.28;
-    const tallScore=Math.min(1,bh/(H*.45));
-    const score=frac*6.0+fill*.85+Math.max(0,1-centerPenalty)*.52+tallScore*.42+aspectScore*.26;
-    const corners=[tl,tr,br,bl];
-    if(corners.some(x=>!x))return null;
-    return {score,corners,count,bbox:{minX,maxX,minY,maxY},fill};
-  }
-  function detectBoardCandidate(d,W,H){
-    const seeds=[];
-    for(const fy of [.18,.28,.38,.48,.58,.68,.78,.88]){
-      for(const fx of [.12,.22,.34,.46,.58,.70,.82]) seeds.push([Math.round(W*fx),Math.round(H*fy)]);
-    }
-    let best=null;
-    for(const [x,y] of seeds){
-      const r=regionFromSeed(d,W,H,x,y);
-      if(r&&(!best||r.score>best.score))best=r;
-    }
-    if(!best||best.score<.38)return null;
-    const p=best.corners, area=polygonArea(p);
-    if(area<W*H*.006)return null;
-    return {corners:p,confidence:Math.min(.98,.42+best.score*.24)};
-  }
-  function avgCornerDistance(a,b){if(!a||!b)return Infinity;let s=0;for(let i=0;i<4;i++)s+=dist(a[i],b[i]);return s/4}
-  function smoothCorners(a,b){return a.map((p,i)=>({x:p.x*.7+b[i].x*.3,y:p.y*.7+b[i].y*.3}))}
-  function dispatchCal(){window.dispatchEvent(new CustomEvent('calibrationchange',{detail:getCalibration()}))}
-  function lockBoard(candidate,W,H){
-    if(!candidate){
-      if(cal.board.length===4){ boardMisses++; if(boardMisses>18){ cal.board=[]; cal.hole=null; cal.holeEdge=null; cal.boardConfidence=0; cal.holeConfidence=0; autoCalibrate=true; saveCal(); dispatchCal(); } }
-      boardStableFrames=Math.max(0,boardStableFrames-1);
-      return false;
-    }
-    boardMisses=0;
-    if(boardCandidate&&avgCornerDistance(boardCandidate.corners,candidate.corners)<Math.max(10,W*.085)){
-      boardCandidate={corners:smoothCorners(boardCandidate.corners,candidate.corners),confidence:(boardCandidate.confidence+candidate.confidence)/2};
-      boardStableFrames++;
-    } else { boardCandidate=candidate; boardStableFrames=1; }
-    if(boardStableFrames>=3){
-      cal.board=boardCandidate.corners.map(p=>procToVideo(p,W,H));
-      cal.boardConfidence=boardCandidate.confidence;
-      saveCal(); dispatchCal();
-      return true;
-    }
-    return false;
+  function boardPixel(r,g,b){
+    const {h,s,v}=rgbToHsv(r,g,b), lum=(r*.30+g*.60+b*.10)/255;
+    if(v<.38||pixelTeam(r,g,b))return false;
+    const grass=h>=65&&h<=175&&s>.18;
+    if(grass)return false;
+    // Cornhole board tops are normally much brighter and less saturated than grass.
+    // Keeping this intentionally strict prevents large lawn patches from becoming fake boards.
+    return lum>.55&&s<.52;
   }
   function integralGray(d,W,H){
     const I=new Float64Array((W+1)*(H+1));
-    for(let y=1;y<=H;y++){
-      let row=0;
-      for(let x=1;x<=W;x++){
-        const j=((y-1)*W+(x-1))*4;
-        row+=(d[j]*3+d[j+1]*6+d[j+2])/10;
-        I[y*(W+1)+x]=I[(y-1)*(W+1)+x]+row;
-      }
-    }
+    for(let y=1;y<=H;y++){let row=0;for(let x=1;x<=W;x++){const j=((y-1)*W+(x-1))*4;row+=(d[j]*3+d[j+1]*6+d[j+2])/10;I[y*(W+1)+x]=I[(y-1)*(W+1)+x]+row}}
     return I;
   }
   function boxMean(I,W,H,cx,cy,r){
-    const x0=Math.max(0,Math.floor(cx-r)), x1=Math.min(W-1,Math.ceil(cx+r)), y0=Math.max(0,Math.floor(cy-r)), y1=Math.min(H-1,Math.ceil(cy+r));
-    const S=W+1, a=I[y0*S+x0], b=I[y0*S+x1+1], c=I[(y1+1)*S+x0], d=I[(y1+1)*S+x1+1], n=(x1-x0+1)*(y1-y0+1);
-    return (d-b-c+a)/Math.max(1,n);
+    const x0=Math.max(0,Math.floor(cx-r)),x1=Math.min(W-1,Math.ceil(cx+r)),y0=Math.max(0,Math.floor(cy-r)),y1=Math.min(H-1,Math.ceil(cy+r));
+    const S=W+1,a=I[y0*S+x0],b=I[y0*S+x1+1],c=I[(y1+1)*S+x0],d=I[(y1+1)*S+x1+1],n=(x1-x0+1)*(y1-y0+1);return(d-b-c+a)/Math.max(1,n);
   }
-  function detectHoleCandidate(d,W,H,poly){
+  function detectHoleCandidate(d,W,H,poly,I){
     if(poly.length!==4)return null;
-    const xs=poly.map(p=>p.x), ys=poly.map(p=>p.y), minX=Math.max(0,Math.floor(Math.min(...xs))), maxX=Math.min(W-1,Math.ceil(Math.max(...xs))), minY=Math.max(0,Math.floor(Math.min(...ys))), maxY=Math.min(H-1,Math.ceil(Math.max(...ys)));
-    const topW=Math.max(10,dist(poly[0],poly[1])), botW=Math.max(10,dist(poly[3],poly[2])), expectedR=Math.max(2.6,Math.min(16,(topW*.72+botW*.28)/8.4));
-    const I=integralGray(d,W,H); let best=null; const yLimit=minY+(maxY-minY)*.72;
-    for(let y=minY+2;y<=yLimit;y+=2){
-      for(let x=minX+2;x<=maxX-2;x+=2){
+    const xs=poly.map(p=>p.x),ys=poly.map(p=>p.y),minX=Math.max(1,Math.floor(Math.min(...xs))),maxX=Math.min(W-2,Math.ceil(Math.max(...xs))),minY=Math.max(1,Math.floor(Math.min(...ys))),maxY=Math.min(H-2,Math.ceil(Math.max(...ys)));
+    const topW=Math.max(4,dist(poly[0],poly[1])),botW=Math.max(4,dist(poly[3],poly[2]));
+    const expectedR=Math.max(1.8,Math.min(15,(topW*.68+botW*.32)/8.0));
+    let best=null;const step=Math.max(1,Math.round(expectedR*.45));
+    for(let y=minY+1;y<=maxY-1;y+=step){
+      for(let x=minX+1;x<=maxX-1;x+=step){
         if(!pointInPoly({x,y},poly))continue;
-        const inner=boxMean(I,W,H,x,y,expectedR*.58), outer=boxMean(I,W,H,x,y,expectedR*1.55), score=(outer-inner)+(118-inner)*.055;
+        const inner=boxMean(I,W,H,x,y,expectedR*.55),outer=boxMean(I,W,H,x,y,expectedR*1.45);
+        const score=(outer-inner)+(125-inner)*.06;
         if(!best||score>best.score)best={x,y,r:expectedR,score,inner,outer};
       }
     }
-    if(!best||best.score<10.8||best.inner>132)return null;
-    return {center:{x:best.x,y:best.y},r:best.r,confidence:Math.min(.98,.45+(best.score-9.5)/38)};
+    if(!best||best.score<8.0||best.inner>150)return null;
+    return{center:{x:best.x,y:best.y},r:best.r,confidence:Math.min(.99,.44+Math.max(0,best.score-7)/34)};
   }
-  function lockHole(candidate,W,H){
-    if(!candidate){ holeStableFrames=Math.max(0,holeStableFrames-1); return false; }
-    if(holeCandidate&&dist(holeCandidate.center,candidate.center)<Math.max(5,W*.035)){
-      holeCandidate={center:{x:holeCandidate.center.x*.72+candidate.center.x*.28,y:holeCandidate.center.y*.72+candidate.center.y*.28},r:holeCandidate.r*.72+candidate.r*.28,confidence:(holeCandidate.confidence+candidate.confidence)/2};
-      holeStableFrames++;
-    } else { holeCandidate=candidate; holeStableFrames=1; }
-    if(holeStableFrames>=2){
-      cal.hole=procToVideo(holeCandidate.center,W,H);
-      cal.holeEdge=procToVideo({x:holeCandidate.center.x+holeCandidate.r,y:holeCandidate.center.y},W,H);
-      cal.holeConfidence=holeCandidate.confidence;
-      saveCal(); dispatchCal();
-      return true;
+  function componentBoards(d,W,H){
+    const N=W*H,mask=new Uint8Array(N),seen=new Uint8Array(N),I=integralGray(d,W,H);
+    for(let i=0;i<N;i++){const j=i*4;if(boardPixel(d[j],d[j+1],d[j+2]))mask[i]=1}
+    const q=new Int32Array(N),out=[];
+    const minPixels=Math.max(12,Math.round(N*.00028)),maxPixels=Math.round(N*.22);
+    for(let sy=1;sy<H-1;sy+=1){
+      for(let sx=1;sx<W-1;sx+=1){
+        const seed=sy*W+sx;if(!mask[seed]||seen[seed])continue;
+        let head=0,tail=0,count=0,minX=W,maxX=0,minY=H,maxY=0,sumX=0,sumY=0;
+        let tl=null,tr=null,br=null,bl=null,tlv=Infinity,trv=-Infinity,brv=-Infinity,blv=Infinity;
+        q[tail++]=seed;seen[seed]=1;
+        while(head<tail&&count<=maxPixels){
+          const idx=q[head++],x=idx%W,y=(idx/W)|0;if(!mask[idx])continue;
+          count++;sumX+=x;sumY+=y;if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;
+          const s=x+y,dd=x-y;if(s<tlv){tlv=s;tl={x,y}}if(dd>trv){trv=dd;tr={x,y}}if(s>brv){brv=s;br={x,y}}if(dd<blv){blv=dd;bl={x,y}}
+          const ns=[idx-1,idx+1,idx-W,idx+W];
+          if(x===0)ns[0]=-1;if(x===W-1)ns[1]=-1;if(y===0)ns[2]=-1;if(y===H-1)ns[3]=-1;
+          for(const ni of ns){if(ni>=0&&!seen[ni]&&mask[ni]){seen[ni]=1;q[tail++]=ni}}
+        }
+        if(count<minPixels||count>maxPixels||!tl||!tr||!br||!bl)continue;
+        const bw=maxX-minX+1,bh=maxY-minY+1,bboxArea=bw*bh,fill=count/Math.max(1,bboxArea),frac=count/N;
+        if(bw<5||bh<5||bboxArea>N*.25||fill<.16)continue;
+        const aspect=bw/bh;if(aspect<.18||aspect>5.8)continue;
+        const corners=[tl,tr,br,bl],area=polygonArea(corners);
+        if(area<N*.00018)continue;
+        const hole=detectHoleCandidate(d,W,H,corners,I);
+        const cx=sumX/count,cy=sumY/count;
+        const edgePenalty=(minX<2||maxX>W-3||minY<2||maxY>H-3)?.35:0;
+        const sizeScore=Math.min(1,Math.sqrt(frac/.025));
+        const fillScore=Math.min(1,fill/.62);
+        const holeScore=hole?1:0;
+        const shapeScore=(aspect>.28&&aspect<3.8)?1:.45;
+        const score=sizeScore*.22+fillScore*.24+shapeScore*.18+holeScore*.52-edgePenalty;
+        if(score<.42)continue;
+        out.push({corners,hole,score,confidence:Math.min(.99,.40+score*.42),center:{x:cx,y:cy},bbox:{minX,maxX,minY,maxY}});
+      }
     }
-    return false;
+    out.sort((a,b)=>b.score-a.score);
+    const picked=[];
+    for(const c of out){
+      if(picked.length>=2)break;
+      let overlaps=false;
+      for(const p of picked){
+        const d0=dist(c.center,p.center),scale=Math.max(8,Math.sqrt(Math.max(polygonArea(c.corners),polygonArea(p.corners))));
+        if(d0<scale*.58){overlaps=true;break}
+      }
+      if(!overlaps)picked.push(c);
+    }
+    return picked;
+  }
+  function avgCornerDistance(a,b){if(!a||!b)return Infinity;let s=0;for(let i=0;i<4;i++)s+=dist(a[i],b[i]);return s/4}
+  function smoothCorners(a,b){return a.map((p,i)=>({x:p.x*.68+b[i].x*.32,y:p.y*.68+b[i].y*.32}))}
+  function dispatchCal(){window.dispatchEvent(new CustomEvent('calibrationchange',{detail:getCalibration()}))}
+  function syncLegacyFields(){
+    const first=cal.boards?.[0];
+    cal.board=first?.poly||[];cal.hole=first?.hole||null;cal.holeEdge=first?.holeEdge||null;
+    cal.boardConfidence=first?.confidence||0;cal.holeConfidence=first?.holeConfidence||0;
+  }
+  function updateBoardTracks(candidates,W,H){
+    const matched=new Set();
+    for(const track of boardTracks){
+      let best=-1,bestD=Infinity;
+      for(let i=0;i<candidates.length;i++){
+        if(matched.has(i))continue;
+        const d0=avgCornerDistance(track.corners,candidates[i].corners);
+        if(d0<bestD){bestD=d0;best=i}
+      }
+      if(best>=0&&bestD<Math.max(10,W*.11)){
+        const c=candidates[best];matched.add(best);track.corners=smoothCorners(track.corners,c.corners);track.confidence=track.confidence*.72+c.confidence*.28;track.hits++;track.misses=0;
+        if(c.hole){
+          track.hole=track.hole?{x:track.hole.x*.7+c.hole.center.x*.3,y:track.hole.y*.7+c.hole.center.y*.3}:c.hole.center;
+          track.holeR=track.holeR?track.holeR*.7+c.hole.r*.3:c.hole.r;track.holeConfidence=Math.max(track.holeConfidence||0,c.hole.confidence);
+        }
+      }else track.misses++;
+    }
+    for(let i=0;i<candidates.length;i++)if(!matched.has(i)){
+      const c=candidates[i];boardTracks.push({corners:c.corners,confidence:c.confidence,hits:1,misses:0,hole:c.hole?.center||null,holeR:c.hole?.r||0,holeConfidence:c.hole?.confidence||0});
+    }
+    boardTracks=boardTracks.filter(t=>t.misses<42).sort((a,b)=>(b.hits-b.misses)-(a.hits-a.misses)||b.confidence-a.confidence).slice(0,2);
+    const locked=boardTracks.filter(t=>t.hits>=2&&t.confidence>.42);
+    cal.boards=locked.map(t=>({
+      poly:t.corners.map(p=>procToVideo(p,W,H)),
+      hole:t.hole?procToVideo(t.hole,W,H):null,
+      holeEdge:t.hole&&t.holeR?procToVideo({x:t.hole.x+t.holeR,y:t.hole.y},W,H):null,
+      confidence:t.confidence,holeConfidence:t.holeConfidence||0
+    }));
+    syncLegacyFields();saveCal();dispatchCal();
   }
   function autoDetect(d,W,H){
-    if(!autoCalibrate && cal.board.length===4 && cal.hole && cal.holeEdge) return;
-    const b=detectBoardCandidate(d,W,H);
-    const lockedBoard=lockBoard(b,W,H);
-    const useBoard=lockedBoard || cal.board.length===4;
-    if(useBoard){
-      const p=boardProc(W,H), h=detectHoleCandidate(d,W,H,p);
-      lockHole(h,W,H);
-    }
-    if(cal.board.length===4 && cal.hole && cal.holeEdge) autoCalibrate=false;
+    const candidates=componentBoards(d,W,H);updateBoardTracks(candidates,W,H);
+  }
+  function boardsProc(W,H){
+    return (cal.boards||[]).map(b=>{
+      const poly=(b.poly||[]).map(p=>({x:p.x/video.videoWidth*W,y:p.y/video.videoHeight*H}));
+      let hole=null;
+      if(b.hole&&b.holeEdge){const h={x:b.hole.x/video.videoWidth*W,y:b.hole.y/video.videoHeight*H},e={x:b.holeEdge.x/video.videoWidth*W,y:b.holeEdge.y/video.videoHeight*H};hole={h,r:dist(h,e)}}
+      return{poly,hole,confidence:b.confidence||0};
+    }).filter(b=>b.poly.length===4);
   }
   function resetTracking(){
-    active=false; quietFrames=0; activeFrames=0; cooldownFrames=0; votesA=0; votesB=0; minHolePx=Infinity; lastMotionProc=null; maxBagMotion=0;
-    lastGray=null; lastTeamMap=null; stableMap=null; beforeMap=null; lastVideoTime=-1;
+    active=false;quietFrames=0;activeFrames=0;cooldownFrames=0;votesA=0;votesB=0;lastMotionProc=null;maxBagMotion=0;
+    lastGray=null;lastTeamMap=null;stableMap=null;beforeMap=null;lastVideoTime=-1;
   }
-  function analyzeThrow(afterMap,W,H,poly,hole){
-    const voteTotal=votesA+votesB, team=votesA>=votesB?'A':'B', teamConfidence=voteTotal?Math.max(votesA,votesB)/voteTotal:.5, id=team==='A'?1:2;
-    const base=beforeMap||stableMap||new Uint8Array(afterMap.length);
-    let added=0,sx=0,sy=0;
-    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-      const i=y*W+x;
-      if(afterMap[i]===id && base[i]!==id && pointInPoly({x,y},poly)){ added++; sx+=x; sy+=y; }
+  function nearestBoard(point,boards){
+    if(!point||!boards.length)return null;
+    let best=null,bestScore=Infinity;
+    for(const b of boards){
+      if(pointInPoly(point,b.poly))return b;
+      const c=polyCenter(b.poly),scale=Math.max(5,Math.sqrt(polygonArea(b.poly))),score=dist(point,c)/scale;
+      if(score<bestScore){bestScore=score;best=b}
     }
-    const area=Math.max(1,polygonArea(poly)), minAdded=Math.max(5,Math.round(area*(sensitivity==='high'?.0011:sensitivity==='low'?.0025:.0017)));
-    const addedProc=added?{x:sx/added,y:sy/added}:null, landingProc=addedProc||lastMotionProc, nearHole=!!hole&&minHolePx<=hole.r*1.82, landedOnBoard=!!addedProc&&added>=minAdded&&pointInPoly(addedProc,poly);
-    let result='miss';
-    if(nearHole&&added<minAdded*1.55)result='hole';
-    else if(landedOnBoard)result='board';
-    else if(landingProc&&pointInPoly(landingProc,poly)&&!nearHole&&maxBagMotion>0)result='board';
+    return bestScore<2.3?best:null;
+  }
+  function analyzeThrow(afterMap,W,H,boards){
+    const voteTotal=votesA+votesB,team=votesA>=votesB?'A':'B',teamConfidence=voteTotal?Math.max(votesA,votesB)/voteTotal:.5,id=team==='A'?1:2;
+    const base=beforeMap||stableMap||new Uint8Array(afterMap.length);
+    let globalAdded=0,gx=0,gy=0;const boardAdds=boards.map(()=>({n:0,sx:0,sy:0}));
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const i=y*W+x;if(afterMap[i]!==id||base[i]===id)continue;
+      globalAdded++;gx+=x;gy+=y;
+      for(let bi=0;bi<boards.length;bi++)if(pointInPoly({x,y},boards[bi].poly)){boardAdds[bi].n++;boardAdds[bi].sx+=x;boardAdds[bi].sy+=y}
+    }
+    let targetIndex=-1,bestAdded=0;
+    for(let i=0;i<boardAdds.length;i++)if(boardAdds[i].n>bestAdded){bestAdded=boardAdds[i].n;targetIndex=i}
+    const globalCentroid=globalAdded?{x:gx/globalAdded,y:gy/globalAdded}:lastMotionProc;
+    if(targetIndex<0&&globalCentroid){const b=nearestBoard(globalCentroid,boards);targetIndex=b?boards.indexOf(b):-1}
+    const target=targetIndex>=0?boards[targetIndex]:null;
+    let result='miss',landingProc=globalCentroid,nearHole=false,minAdded=6;
+    if(target){
+      const area=Math.max(1,polygonArea(target.poly));minAdded=Math.max(4,Math.round(area*(sensitivity==='high'?.0010:sensitivity==='low'?.0024:.0016)));
+      const a=boardAdds[targetIndex];if(a?.n){landingProc={x:a.sx/a.n,y:a.sy/a.n}}
+      nearHole=!!(target.hole&&landingProc&&dist(landingProc,target.hole.h)<=target.hole.r*1.7);
+      if(target.hole&&lastMotionProc&&dist(lastMotionProc,target.hole.h)<=target.hole.r*1.55)nearHole=true;
+      if(nearHole&&bestAdded<minAdded*1.8)result='hole';
+      else if(bestAdded>=minAdded||landingProc&&pointInPoly(landingProc,target.poly))result='board';
+    }
     const centroid=landingProc?procToVideo(landingProc,W,H):null;
-    const settleConfidence=Math.min(.98,.56+Math.min(added/(minAdded*3),1)*.18+Math.min(activeFrames/10,1)*.14+Math.min(maxBagMotion/45,1)*.10);
-    return {team,result,confidence:Math.min(.99,settleConfidence*.72+teamConfidence*.28),teamConfidence,centroid,addedPixels:added,minAdded,nearHole};
+    const settleConfidence=Math.min(.98,.55+Math.min(bestAdded/(Math.max(1,minAdded)*3),1)*.18+Math.min(activeFrames/10,1)*.14+Math.min(maxBagMotion/60,1)*.11);
+    return{team,result,confidence:Math.min(.99,settleConfidence*.72+teamConfidence*.28),teamConfidence,centroid,addedPixels:bestAdded,minAdded,nearHole,boardIndex:targetIndex};
   }
   function draw(){
-    fitCanvas(); const r=overlay.getBoundingClientRect(); octx.clearRect(0,0,r.width,r.height); octx.font='13px system-ui';
-    if(cal.board.length===4){
-      octx.lineWidth=4; octx.strokeStyle='#22d07f'; octx.fillStyle='#22d07f'; octx.beginPath();
-      cal.board.forEach((p,i)=>{const q=videoToDisp(p); i?octx.lineTo(q.x,q.y):octx.moveTo(q.x,q.y)}); octx.closePath(); octx.stroke();
-      const q=videoToDisp(cal.board[0]); octx.fillText('BOARD TRACKED',q.x+8,q.y-8);
-    }
-    if(cal.hole&&cal.holeEdge){
-      const h=videoToDisp(cal.hole), e=videoToDisp(cal.holeEdge), rr=Math.hypot(e.x-h.x,e.y-h.y);
-      octx.strokeStyle='#ffd166'; octx.lineWidth=4; octx.beginPath(); octx.arc(h.x,h.y,rr,0,Math.PI*2); octx.stroke();
-      octx.fillStyle='#ffd166'; octx.fillText('HOLE',h.x+rr+6,h.y);
-    }
-    if(lastCentroid){
-      const c=videoToDisp(lastCentroid); octx.strokeStyle=lastTeam==='B'?'#ff4458':'#2d8cff'; octx.lineWidth=4; octx.beginPath(); octx.arc(c.x,c.y,18,0,Math.PI*2); octx.stroke();
-      octx.fillStyle='#fff'; octx.fillText(lastTeam==='B'?'RED':'BLUE',c.x+21,c.y);
-    }
+    fitCanvas();const r=overlay.getBoundingClientRect();octx.clearRect(0,0,r.width,r.height);octx.font='13px system-ui';
+    const b=displayBox();
+    octx.save();octx.lineWidth=3;octx.strokeStyle='#22d07f';octx.setLineDash([10,7]);octx.strokeRect(b.ox+2,b.oy+2,Math.max(0,b.w-4),Math.max(0,b.h-4));octx.setLineDash([]);octx.fillStyle='#22d07f';octx.fillText('FULL YARD VISION',b.ox+10,b.oy+20);octx.restore();
+    (cal.boards||[]).forEach((board,idx)=>{
+      if(board.poly?.length!==4)return;
+      octx.lineWidth=4;octx.strokeStyle='#35cfff';octx.fillStyle='#35cfff';octx.beginPath();
+      board.poly.forEach((p,i)=>{const q=videoToDisp(p);i?octx.lineTo(q.x,q.y):octx.moveTo(q.x,q.y)});octx.closePath();octx.stroke();
+      const q=videoToDisp(board.poly[0]);octx.fillText(`BOARD ${idx+1}`,q.x+8,q.y-8);
+      if(board.hole&&board.holeEdge){const h=videoToDisp(board.hole),e=videoToDisp(board.holeEdge),rr=Math.hypot(e.x-h.x,e.y-h.y);octx.strokeStyle='#ffd166';octx.lineWidth=4;octx.beginPath();octx.arc(h.x,h.y,rr,0,Math.PI*2);octx.stroke();octx.fillStyle='#ffd166';octx.fillText(`HOLE ${idx+1}`,h.x+rr+5,h.y)}
+    });
+    if(lastCentroid){const c=videoToDisp(lastCentroid);octx.strokeStyle=lastTeam==='B'?'#ff4458':'#2d8cff';octx.lineWidth=4;octx.beginPath();octx.arc(c.x,c.y,18,0,Math.PI*2);octx.stroke();octx.fillStyle='#fff';octx.fillText(lastTeam==='B'?'RED BAG':'BLUE BAG',c.x+21,c.y)}
   }
   function processFrame(ts){
     if(!running)return;
-    if(lastT){const inst=1000/Math.max(1,ts-lastT);fps=fps*.9+inst*.1} lastT=ts;
+    if(lastT){const inst=1000/Math.max(1,ts-lastT);fps=fps*.9+inst*.1}lastT=ts;
     if(video?.readyState>=2&&video.videoWidth){
       const vt=video.currentTime;
       if(vt!==lastVideoTime){
-        lastVideoTime=vt; frameNo++;
-        const W=260,H=Math.max(90,Math.round(260*video.videoHeight/video.videoWidth));
-        proc.width=W; proc.height=H; pctx.drawImage(video,0,0,W,H);
+        lastVideoTime=vt;frameNo++;
+        const W=288,H=Math.max(96,Math.round(288*video.videoHeight/video.videoWidth));proc.width=W;proc.height=H;pctx.drawImage(video,0,0,W,H);
         const d=pctx.getImageData(0,0,W,H).data;
-        if(frameNo%8===0 || autoCalibrate) autoDetect(d,W,H);
-        const gray=new Uint8Array(W*H), teamMap=new Uint8Array(W*H), poly=boardProc(W,H), hole=holeProc(W,H), box=playBBox(poly,W,H);
+        if(frameNo%10===0||!(cal.boards?.length))autoDetect(d,W,H);
+        const gray=new Uint8Array(W*H),teamMap=new Uint8Array(W*H),boards=boardsProc(W,H);
         let changedColor=0,sx=0,sy=0,fa=0,fb=0;
         for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-          const i=y*W+x,j=i*4,r=d[j],g=d[j+1],b=d[j+2];
-          gray[i]=(r*3+g*6+b)/10;
-          const t=pixelTeam(r,g,b); teamMap[i]=t;
-          if(lastGray&&x>=box.x0&&x<=box.x1&&y>=box.y0&&y<=box.y1){
-            const dv=Math.abs(gray[i]-lastGray[i]);
-            if(dv>18){
-              const mt=t||(lastTeamMap?lastTeamMap[i]:0);
-              if(mt){ changedColor++; sx+=x; sy+=y; if(mt===1)fa++; else fb++; }
-            }
-          }
+          const i=y*W+x,j=i*4,r=d[j],g=d[j+1],bl=d[j+2];gray[i]=(r*3+g*6+bl)/10;const t=pixelTeam(r,g,bl);teamMap[i]=t;
+          if(lastGray){const dv=Math.abs(gray[i]-lastGray[i]);if(dv>16){const mt=t||(lastTeamMap?lastTeamMap[i]:0);if(mt){changedColor++;sx+=x;sy+=y;if(mt===1)fa++;else fb++}}}
         }
-        const motion=Math.min(1,changedColor/(sensitivity==='high'?34:sensitivity==='low'?64:48));
-        const minMove=sensitivity==='high'?5:sensitivity==='low'?11:8;
-        const moving=changedColor>=minMove;
+        const motion=Math.min(1,changedColor/(sensitivity==='high'?42:sensitivity==='low'?82:58));
+        const minMove=sensitivity==='high'?6:sensitivity==='low'?14:9,moving=changedColor>=minMove;
         if(cooldownFrames>0)cooldownFrames--;
-        if(auto&&poly.length===4&&hole){
+        if(auto&&boards.length){
           if(moving&&cooldownFrames===0){
-            if(!active){ active=true; quietFrames=0; activeFrames=0; beforeMap=cloneMap(stableMap||lastTeamMap||teamMap); votesA=0; votesB=0; minHolePx=Infinity; lastMotionProc=null; maxBagMotion=0; }
-            activeFrames++; quietFrames=0; votesA+=fa; votesB+=fb; maxBagMotion=Math.max(maxBagMotion,changedColor);
-            const c={x:sx/changedColor,y:sy/changedColor}; lastMotionProc=c; lastCentroid=procToVideo(c,W,H); lastTeam=votesA>=votesB?'A':'B';
-            if(hole)minHolePx=Math.min(minHolePx,dist(c,hole.h));
-          } else if(active){
+            if(!active){active=true;quietFrames=0;activeFrames=0;beforeMap=cloneMap(stableMap||lastTeamMap||teamMap);votesA=0;votesB=0;lastMotionProc=null;maxBagMotion=0}
+            activeFrames++;quietFrames=0;votesA+=fa;votesB+=fb;maxBagMotion=Math.max(maxBagMotion,changedColor);
+            const c={x:sx/changedColor,y:sy/changedColor};lastMotionProc=c;lastCentroid=procToVideo(c,W,H);lastTeam=votesA>=votesB?'A':'B';
+          }else if(active){
             quietFrames++;
-            if(quietFrames>=9){
-              active=false; quietFrames=0;
-              if(activeFrames>=2){ const e=analyzeThrow(teamMap,W,H,poly,hole); if(onThrow)onThrow(e); }
-              stableMap=cloneMap(teamMap); beforeMap=null; cooldownFrames=7; activeFrames=0; votesA=0; votesB=0; minHolePx=Infinity; maxBagMotion=0;
-            }
-          } else if(cooldownFrames===0){ stableMap=cloneMap(teamMap); }
-        } else { active=false; quietFrames=0; stableMap=cloneMap(teamMap); }
-        lastGray=gray; lastTeamMap=teamMap;
-        if(onMetrics)onMetrics({motion,fps,centroid:lastCentroid,team:lastTeam,active,changedColor,boardReady:cal.board.length===4,holeReady:!!(cal.hole&&cal.holeEdge),boardConfidence:cal.boardConfidence||0,holeConfidence:cal.holeConfidence||0,autoCalibrate});
+            if(quietFrames>=9){active=false;quietFrames=0;if(activeFrames>=2){const e=analyzeThrow(teamMap,W,H,boards);if(onThrow)onThrow(e)}stableMap=cloneMap(teamMap);beforeMap=null;cooldownFrames=7;activeFrames=0;votesA=0;votesB=0;maxBagMotion=0}
+          }else if(cooldownFrames===0)stableMap=cloneMap(teamMap);
+        }else{active=false;quietFrames=0;stableMap=cloneMap(teamMap)}
+        lastGray=gray;lastTeamMap=teamMap;
+        if(onMetrics)onMetrics({motion,fps,centroid:lastCentroid,team:lastTeam,active,changedColor,boardReady:boards.length>0,holeReady:boards.some(b=>!!b.hole),boardCount:boards.length,holeCount:boards.filter(b=>!!b.hole).length,boardConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.confidence||0)),holeConfidence:Math.max(0,...(cal.boards||[]).map(b=>b.holeConfidence||0)),fullYard:true});
       }
       draw();
     }
     requestAnimationFrame(processFrame);
   }
-  function init(v,c,throwCb,metricsCb){
-    video=v; overlay=c; octx=c.getContext('2d'); proc=document.createElement('canvas'); pctx=proc.getContext('2d',{willReadFrequently:true}); onThrow=throwCb; onMetrics=metricsCb; resetTracking();
-    if(!running){ running=true; requestAnimationFrame(processFrame); }
+  function init(v,c,throwCb,metricsCb){video=v;overlay=c;octx=c.getContext('2d');proc=document.createElement('canvas');pctx=proc.getContext('2d',{willReadFrequently:true});onThrow=throwCb;onMetrics=metricsCb;resetTracking();if(!running){running=true;requestAnimationFrame(processFrame)}}
+  function setAuto(v){auto=!!v;resetTracking()}
+  function setSensitivity(v){sensitivity=['high','normal','low'].includes(v)?v:'high';resetTracking()}
+  function rescan(){cal={boards:[],board:[],hole:null,holeEdge:null,boardConfidence:0,holeConfidence:0};boardTracks=[];saveCal();resetTracking();dispatchCal()}
+  function clear(){rescan()}
+  function getCalibration(){return JSON.parse(JSON.stringify(cal))}
+  function saveCal(){try{localStorage.setItem('cornhole-v7-1-yard-cal',JSON.stringify(cal))}catch{}}
+  function loadCal(){
+    try{
+      const x=JSON.parse(localStorage.getItem('cornhole-v7-1-yard-cal'));
+      if(x)cal=x;else{const old=JSON.parse(localStorage.getItem('cornhole-v7-yard-cal'));if(old?.board?.length===4)cal={boards:[{poly:old.board,hole:old.hole||null,holeEdge:old.holeEdge||null,confidence:old.boardConfidence||.65,holeConfidence:old.holeConfidence||.65}],...old}}
+    }catch{}
+    if(!Array.isArray(cal.boards))cal.boards=[];syncLegacyFields();return getCalibration();
   }
-  function setAuto(v){ auto=!!v; resetTracking(); }
-  function setSensitivity(v){ sensitivity=['high','normal','low'].includes(v)?v:'high'; resetTracking(); }
-  function rescan(){ cal={board:[],hole:null,holeEdge:null,boardConfidence:0,holeConfidence:0}; boardCandidate=null; boardStableFrames=0; holeCandidate=null; holeStableFrames=0; boardMisses=0; autoCalibrate=true; saveCal(); resetTracking(); dispatchCal(); }
-  function clear(){ rescan(); }
-  function getCalibration(){ return JSON.parse(JSON.stringify(cal)); }
-  function saveCal(){ try{localStorage.setItem('cornhole-v7-yard-cal',JSON.stringify(cal))}catch{} }
-  function loadCal(){ try{const x=JSON.parse(localStorage.getItem('cornhole-v7-yard-cal')); if(x)cal=x}catch{} autoCalibrate=!(cal.board?.length===4&&cal.hole&&cal.holeEdge); return getCalibration(); }
-  function snapshot(){ const c=document.createElement('canvas'); c.width=320; c.height=Math.round(320*video.videoHeight/video.videoWidth); c.getContext('2d').drawImage(video,0,0,c.width,c.height); return c.toDataURL('image/jpeg',.72); }
-  return {init,setAuto,setSensitivity,rescan,clear,getCalibration,loadCal,snapshot};
+  function snapshot(){const c=document.createElement('canvas');c.width=320;c.height=Math.round(320*video.videoHeight/video.videoWidth);c.getContext('2d').drawImage(video,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.72)}
+  return{init,setAuto,setSensitivity,rescan,clear,getCalibration,loadCal,snapshot};
 })();
