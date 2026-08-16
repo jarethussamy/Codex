@@ -1,7 +1,7 @@
 const EasyPlay=(()=>{
   const $=id=>document.getElementById(id);
   let wakeLock=null,setupTimer=0,flashTimer=0,voiceOn=localStorage.getItem('cornhole-v8-voice')!=='off';
-  let lastReview='',lastRound=1;
+  let lastReview='',lastRound=1,sfxCtx=null,sfxMaster=null;
 
   function setStatus(text,state=''){
     const el=$('gameStatus'); if(!el)return;
@@ -15,15 +15,66 @@ const EasyPlay=(()=>{
   }
   async function releaseWake(){try{await wakeLock?.release?.()}catch{}wakeLock=null}
 
+  function soundContext(){
+    try{
+      const AC=window.AudioContext||window.webkitAudioContext;
+      if(!AC)return null;
+      if(!sfxCtx){
+        sfxCtx=new AC({latencyHint:'interactive'});
+        sfxMaster=sfxCtx.createGain();
+        sfxMaster.gain.value=.9;
+        const comp=sfxCtx.createDynamicsCompressor();
+        comp.threshold.value=-18;comp.knee.value=12;comp.ratio.value=5;comp.attack.value=.003;comp.release.value=.18;
+        sfxMaster.connect(comp);comp.connect(sfxCtx.destination);
+      }
+      return sfxCtx;
+    }catch{return null}
+  }
+  function unlockSound(){
+    const ctx=soundContext();
+    if(!ctx)return Promise.resolve(false);
+    try{
+      const p=ctx.state==='suspended'?ctx.resume():Promise.resolve();
+      return Promise.resolve(p).then(()=>ctx.state==='running').catch(()=>false);
+    }catch{return Promise.resolve(false)}
+  }
+  function bellHit(offset=0,accent=1){
+    const ctx=soundContext();if(!ctx||ctx.state!=='running'||!sfxMaster)return false;
+    const t=ctx.currentTime+offset;
+    const hit=ctx.createGain(),metal=ctx.createBiquadFilter();
+    metal.type='bandpass';metal.frequency.setValueAtTime(1350,t);metal.Q.setValueAtTime(.85,t);
+    hit.gain.setValueAtTime(.0001,t);hit.gain.exponentialRampToValueAtTime(.72*accent,t+.006);hit.gain.exponentialRampToValueAtTime(.0001,t+.42);
+    hit.connect(metal);metal.connect(sfxMaster);
+    [545,800,1090].forEach((f,i)=>{
+      const o=ctx.createOscillator();o.type=i===2?'sawtooth':'square';o.frequency.setValueAtTime(f,t);o.frequency.exponentialRampToValueAtTime(f*.92,t+.34);o.connect(hit);o.start(t);o.stop(t+.44);
+    });
+    return true;
+  }
+  function playBell(points=1){
+    if(points<=0)return;
+    unlockSound().then(ok=>{
+      if(!ok)return;
+      const hits=points>=3?3:1;
+      for(let i=0;i<hits;i++)bellHit(i*.19,i===0?1:.9);
+    });
+  }
+  async function testCowbell(){
+    const ok=await unlockSound();
+    if(ok){for(let i=0;i<3;i++)bellHit(i*.19,i===0?1:.9);setStatus('🔔 Cowbell sound is ON','ready')}
+    else setStatus('Sound is blocked — tap Start Game once, then test again.','warn');
+  }
+
   function boardReady(){return $('s1')?.classList.contains('done')}
   function holeReady(){return $('s2')?.classList.contains('done')}
   function autoEnabled(){return $('autoBtn')&&!$('autoBtn').disabled}
   function autoRunning(){return $('autoBtn')?.textContent.includes('Disable')}
 
   async function startGame(){
+    const audioReady=unlockSound();
     clearInterval(setupTimer); setupTimer=0;
     setStartButton('Starting…',true); setStatus('Starting rear camera…','working');
     try{
+      await audioReady;
       await keepAwake();
       App.resetGame();
       await App.startCamera();
@@ -94,7 +145,12 @@ const EasyPlay=(()=>{
   function inspectReview(){
     const text=$('reviewText')?.textContent||'';if(!text||text===lastReview)return;lastReview=text;
     const m=text.match(/Team (Blue|Red)\s*→\s*(HOLE|BOARD|MISS)\s*\((\d+) raw\)/i);
-    if(m){showFlash(m[1][0].toUpperCase()+m[1].slice(1).toLowerCase(),m[2].toUpperCase(),Number(m[3]));updateThrowCounts();setStatus('Score confirmed — next bag','ready')}
+    if(m){
+      const points=Number(m[3]);
+      showFlash(m[1][0].toUpperCase()+m[1].slice(1).toLowerCase(),m[2].toUpperCase(),points);
+      if(points>0)playBell(points);
+      updateThrowCounts();setStatus('Score confirmed — next bag','ready');
+    }
   }
 
   function toggleOutdoor(){
@@ -122,9 +178,11 @@ const EasyPlay=(()=>{
     if(localStorage.getItem('cornhole-v8-outdoor')==='on'){document.body.classList.add('outdoor');if($('outdoorBtn'))$('outdoorBtn').textContent='☀️ Outdoor ON'}
     const obs=new MutationObserver(()=>{inspectReview();syncStatus()});
     ['reviewText','tc','rn','sa','sb','nextThrow','s1','s2','autoBtn','winner'].forEach(id=>{const el=$(id);if(el)obs.observe(el,{childList:true,subtree:true,attributes:true})});
-    document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&autoRunning())keepAwake()});
+    document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&autoRunning()){keepAwake();unlockSound()}});
+    document.addEventListener('pointerdown',unlockSound,{passive:true});
+    document.querySelectorAll('button').forEach(b=>{if((b.textContent||'').includes('Test Cowbell'))b.onclick=testCowbell});
     updateThrowCounts();setStatus('Set the phone down, aim at the yard, and tap Start Game.','');
   }
   document.addEventListener('DOMContentLoaded',init);
-  return{startGame,stopGame,rescan,hideFlash,toggleOutdoor,toggleVoice};
+  return{startGame,stopGame,rescan,hideFlash,toggleOutdoor,toggleVoice,testCowbell};
 })();
