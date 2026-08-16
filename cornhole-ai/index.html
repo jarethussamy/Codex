@@ -6,29 +6,54 @@
   <meta name="theme-color" content="#0d2230">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Cornhole AI Camera V8 Easy Play</title>
+  <title>Cornhole AI Camera V9 Accuracy Mode</title>
   <link rel="stylesheet" href="./style.css">
 </head>
 <body><main>
-  <header><span class="pill">🤳 YARD VISION V8</span><span class="pill" id="sys">READY</span></header>
+  <header><span class="pill">🤳 YARD VISION V9</span><span class="pill" id="sys">READY</span></header>
+
   <section class="hero">
     <h1>Cornhole AI Ref</h1>
-    <div class="mut">Set the phone down, aim at the yard, and play. Yard Vision handles the boards, bags, scoring, sounds, and referee calls.</div>
+    <div class="mut">Zero-touch scoring with two-board tracking, overlap-safe bag handling, duplicate protection, automatic round completion, and automatic end switching.</div>
   </section>
 
   <section class="card scores gameScores">
-    <div class="team"><b class="a">TEAM BLUE</b><div class="n a" id="sa">0</div><small id="blueBags">0/4 bags</small><div class="roundRaw">ROUND <b id="ra">0</b></div></div>
-    <div class="roundCenter"><b>ROUND <span id="rn">1</span></b><br><span class="mut"><span id="tc">0</span>/8 throws</span><div class="nextThrow" id="nextThrow">NEXT: TEAM BLUE</div></div>
-    <div class="team"><b class="b">TEAM RED</b><div class="n b" id="sb">0</div><small id="redBags">0/4 bags</small><div class="roundRaw">ROUND <b id="rb">0</b></div></div>
+    <div class="team">
+      <b class="a">TEAM BLUE</b>
+      <div class="n a" id="sa">0</div>
+      <small id="blueBags">0/4 bags</small>
+      <div class="roundRaw">ROUND <b id="ra">0</b></div>
+    </div>
+    <div class="roundCenter">
+      <b>ROUND <span id="rn">1</span></b><br>
+      <span class="mut"><span id="tc">0</span>/8 throws</span>
+      <div class="nextThrow" id="nextThrow">NEXT: TEAM BLUE</div>
+    </div>
+    <div class="team">
+      <b class="b">TEAM RED</b>
+      <div class="n b" id="sb">0</div>
+      <small id="redBags">0/4 bags</small>
+      <div class="roundRaw">ROUND <b id="rb">0</b></div>
+    </div>
   </section>
-  <div id="winner" class="winner"></div><div id="call"></div>
+
+  <div id="winner" class="winner"></div>
+  <div id="call"></div>
 
   <section class="card easyStart">
     <button class="megaStart" id="startGameBtn" onclick="EasyPlay.startGame()">▶ START GAME</button>
     <div id="gameStatus" class="gameStatus">Set the phone down, aim at the yard, and tap Start Game.</div>
+
+    <div class="reliabilityBar">
+      <span id="activeBoardLabel">🎯 Board 1 active</span>
+      <span id="guardLabel">🛡️ Duplicate guard</span>
+      <span id="overlapLabel">🧠 Overlap tracking</span>
+    </div>
+
     <div class="quickActions">
       <button onclick="App.undo()">↶ Undo</button>
       <button id="voiceBtn" onclick="EasyPlay.toggleVoice()">🔊 Ref Voice ON</button>
+      <button id="autoRoundBtn" onclick="EasyPlay.toggleAutoRound()">🔄 Auto Round ON</button>
       <button id="outdoorBtn" onclick="EasyPlay.toggleOutdoor()">☀️ Outdoor Mode</button>
       <button onclick="EasyPlay.rescan()">◎ Rescan</button>
     </div>
@@ -43,25 +68,30 @@
       <div class="hud"><span id="visionState">Vision idle</span><span id="fps">0 fps</span></div>
       <div id="cameraMeta">No camera connected</div>
     </div>
+
     <div class="steps autoSteps compactSteps">
       <div class="step" id="s1"><b>Boards</b><br><span class="tiny mut" id="boardStatus">Scanning whole yard…</span></div>
       <div class="step" id="s2"><b>Holes</b><br><span class="tiny mut" id="holeStatus">Waiting for board…</span></div>
       <div class="step done teamBlue"><b>Team Blue</b><br><span class="tiny">🔵 Blue bags</span></div>
       <div class="step done teamRed"><b>Team Red</b><br><span class="tiny">🔴 Red bags</span></div>
     </div>
-    <div class="tiny mut" id="calHelp">V8 automatically starts the rear camera, scans the yard, locks onto the board and hole, and enables Auto Ref.</div>
+
+    <div class="tiny mut" id="calHelp">V9 automatically starts the rear camera, finds the boards and holes, selects the active end, and enables Auto Ref.</div>
   </section>
 
   <details class="card helpCard">
     <summary>⚙️ Setup Help & Advanced Controls</summary>
-    <div class="helpIntro">Most players never need these controls. Use them only if the automatic setup needs help.</div>
+    <div class="helpIntro">Most players never need these controls. Use them only if automatic setup needs help.</div>
+
     <div class="diagGrid">
       <div id="dSecure" class="diagItem wait"><div class="diagLabel">HTTPS</div><div class="diagValue">CHECKING</div></div>
       <div id="dApi" class="diagItem wait"><div class="diagLabel">Camera API</div><div class="diagValue">CHECKING</div></div>
       <div id="dPermission" class="diagItem wait"><div class="diagLabel">Permission</div><div class="diagValue">NOT ASKED</div></div>
       <div id="dFrames" class="diagItem wait"><div class="diagLabel">Frames</div><div class="diagValue">0</div></div>
     </div>
+
     <div id="diagText" class="tiny"></div>
+
     <div class="row advancedButtons">
       <button class="go" id="startBtn" onclick="App.startCamera()">🤳 Start Rear Camera</button>
       <label><input id="clipInput" type="file" accept="video/*" capture="environment" hidden onchange="App.loadClip(this)"><span class="fakeButton">🎥 Test Video</span></label>
@@ -74,19 +104,77 @@
 
     <div class="advancedGroup">
       <b>Automatic referee</b>
-      <div class="row"><button class="go" id="autoBtn" onclick="App.toggleAuto()">▶ Enable Auto Ref</button><button onclick="App.testCowbell()">🔔 Test Cowbell</button><button class="warn" onclick="App.resetGame()">Reset Game</button></div>
-      <div class="row"><label class="tiny mut">First throw <select id="firstTeam" onchange="App.setFirstTeam(this.value)"><option value="A">Team Blue</option><option value="B">Team Red</option></select></label><label class="tiny mut">Detection <select id="sensitivity" onchange="App.setSensitivity(this.value)"><option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option></select></label></div>
-      <div class="metric">Bag motion <span id="motionPct">0%</span></div><div class="bar"><i id="motionBar"></i></div>
+      <div class="row">
+        <button class="go" id="autoBtn" onclick="App.toggleAuto()">▶ Enable Auto Ref</button>
+        <button onclick="App.testCowbell()">🔔 Test Cowbell</button>
+        <button onclick="App.endRoundNow()">✓ End Round Now</button>
+        <button class="warn" onclick="App.resetGame()">Reset Game</button>
+      </div>
+
+      <div class="row">
+        <label class="tiny mut">First throw
+          <select id="firstTeam" onchange="App.setFirstTeam(this.value)">
+            <option value="A">Team Blue</option>
+            <option value="B">Team Red</option>
+          </select>
+        </label>
+
+        <label class="tiny mut">Detection
+          <select id="sensitivity" onchange="App.setSensitivity(this.value)">
+            <option value="high">High</option>
+            <option value="normal">Normal</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
+
+        <label class="tiny mut">Active end
+          <select id="activeBoardSelect" onchange="EasyPlay.setBoard(this.value)">
+            <option value="0">Board 1</option>
+            <option value="1">Board 2</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="metric">Bag motion <span id="motionPct">0%</span></div>
+      <div class="bar"><i id="motionBar"></i></div>
     </div>
 
-    <div class="advancedGroup"><b>Review last AI call</b><div class="review"><img id="thumb" class="thumb" alt="Last detection snapshot"><div><div id="reviewText" class="mut">No throw detected yet.</div><div class="row"><button onclick="App.correct('board')">Board +1</button><button onclick="App.correct('hole')">Hole +3</button><button onclick="App.correct('miss')">Miss</button><button onclick="App.swapTeam()">Swap Team</button></div></div></div></div>
+    <div class="advancedGroup">
+      <b>Review last AI call</b>
+      <div class="review">
+        <img id="thumb" class="thumb" alt="Last detection snapshot">
+        <div>
+          <div id="reviewText" class="mut">No throw detected yet.</div>
+          <div class="row">
+            <button onclick="App.correct('board')">Board +1</button>
+            <button onclick="App.correct('hole')">Hole +3</button>
+            <button onclick="App.correct('miss')">Miss</button>
+            <button onclick="App.swapTeam()">Swap Team</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-    <div class="advancedGroup"><b>Manual scoring / testing</b><div class="row"><select id="teamSel"><option value="A">Team Blue</option><option value="B">Team Red</option></select><button onclick="App.manual('board')">Board +1</button><button onclick="App.manual('hole')">Hole +3</button><button onclick="App.manual('miss')">Miss</button><button onclick="App.demoThrow()">🎬 Demo AI Throw</button></div></div>
+    <div class="advancedGroup">
+      <b>Manual scoring / testing</b>
+      <div class="row">
+        <select id="teamSel"><option value="A">Team Blue</option><option value="B">Team Red</option></select>
+        <button onclick="App.manual('board')">Board +1</button>
+        <button onclick="App.manual('hole')">Hole +3</button>
+        <button onclick="App.manual('miss')">Miss</button>
+        <button onclick="App.demoThrow()">🎬 Demo AI Throw</button>
+      </div>
+    </div>
+
     <div class="advancedGroup"><b>Decision log</b><div id="log" class="log"></div></div>
   </details>
 
-  <section class="card tiny mut httpsNote"><b>Best results:</b> mount the phone near the middle of the yard in landscape or portrait, keep both boards visible when possible, and use the HTTPS app in Chrome.</section>
-  <div class="version">Cornhole AI Camera Ref V8 · Easy Play · Yard Vision</div>
+  <section class="card tiny mut httpsNote">
+    <b>Best results:</b> mount the phone near the middle of the yard, keep both boards visible when possible, and use the HTTPS app in Chrome. The green board outline is the active scoring end; cyan is the opposite end.
+  </section>
+
+  <div class="version">Cornhole AI Camera Ref V9 · Accuracy + Zero-Touch Play</div>
+
   <script src="./vision.js"></script>
   <script src="./app.js"></script>
   <script src="./easyplay.js"></script>
